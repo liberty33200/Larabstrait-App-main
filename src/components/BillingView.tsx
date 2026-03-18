@@ -6,14 +6,15 @@ import {
   Search, 
   Filter, 
   Download, 
-  ExternalLink, 
+  Eye, 
   Clock, 
   CheckCircle2, 
   AlertCircle,
   Receipt,
   FileCheck,
   FilePlus,
-  RefreshCw
+  RefreshCw,
+  Calendar // <-- Nouvel import
 } from 'lucide-react';
 
 interface BillingViewProps {
@@ -25,7 +26,9 @@ interface BillingViewProps {
 
 export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProps) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState('all'); // all, draft, sent, paid
+  const [filter, setFilter] = useState('all'); // all, invoices, quotes, pos
+  const [hideCompleted, setHideCompleted] = useState(true);
+  const [timeFilter, setTimeFilter] = useState('month'); // NOUVEAU : Filtre temporel (month, last_month, year, all)
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -40,7 +43,6 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
         const docsData = await docsRes.json();
         setInvoices(docsData);
         if (docsData.length === 0) {
-          // Si c'est vide, on demande un petit debug au serveur
           const debugRes = await apiFetch('/api/abby/test-debug');
           if (debugRes.ok) {
             setDebugInfo(await debugRes.json());
@@ -106,15 +108,109 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
     }
   };
 
+  const handleDownloadPDF = async (inv: any) => {
+    try {
+      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf`);
+      if (!res.ok) throw new Error("Erreur lors du téléchargement");
+      
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${inv.type}_${inv.id}.pdf`; 
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      alert("Impossible de télécharger le PDF. Le document n'est peut-être pas encore généré par Abby.");
+    }
+  };
+
+  const handlePreviewPDF = async (inv: any) => {
+    try {
+      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf?inline=true`);
+      if (!res.ok) throw new Error("Erreur lors de la récupération");
+      
+      const blob = await res.blob();
+      const file = new Blob([blob], { type: 'application/pdf' });
+      const url = URL.createObjectURL(file);
+      
+      window.open(url, '_blank');
+      
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      alert("Impossible de prévisualiser le PDF.");
+    }
+  };
+
+  // --- LOGIQUE DES STATISTIQUES ---
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const isDateInPeriod = (dateStr: string, period: string) => {
+    if (period === 'all') return true;
+    if (!dateStr || dateStr === 'N/A') return false;
+    
+    // Convertir "DD/MM/YYYY" en Date Javascript
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) return false;
+    const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    
+    if (period === 'month') {
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    }
+    if (period === 'last_month') {
+      const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+      const yearOfLastMonth = currentMonth === 0 ? currentYear - 1 : currentYear;
+      return d.getMonth() === lastMonth && d.getFullYear() === yearOfLastMonth;
+    }
+    if (period === 'year') {
+      return d.getFullYear() === currentYear;
+    }
+    return true;
+  };
+
+  const statsInvoices = invoices.filter(inv => isDateInPeriod(inv.date, timeFilter));
+  
+  let pendingAmount = 0;
+  let pendingCount = 0;
+  let paidAmount = 0;
+  let poAmount = 0;
+
+  statsInvoices.forEach(inv => {
+    // En attente (Factures envoyées/finalisées mais non payées)
+    if (inv.type === 'Facture' && inv.status === 'sent') {
+      pendingAmount += inv.amount;
+      pendingCount++;
+    }
+    // Encaissé (Factures payées)
+    if (inv.type === 'Facture' && inv.status === 'paid') {
+      paidAmount += inv.amount;
+    }
+    // Bons de commande générés
+    if (inv.type === 'Bon de commande') {
+      poAmount += inv.amount;
+    }
+  });
+
+  // --- LOGIQUE DU TABLEAU ---
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         inv.id.toLowerCase().includes(searchQuery.toLowerCase());
+                          inv.id.toLowerCase().includes(searchQuery.toLowerCase());
     
-    if (filter === 'all') return matchesSearch;
-    if (filter === 'invoices') return matchesSearch && inv.type === 'Facture';
-    if (filter === 'quotes') return matchesSearch && inv.type === 'Devis';
-    if (filter === 'pos') return matchesSearch && inv.type === 'Bon de commande';
-    return matchesSearch;
+    let matchesType = true;
+    if (filter === 'invoices') matchesType = inv.type === 'Facture';
+    if (filter === 'quotes') matchesType = inv.type === 'Devis';
+    if (filter === 'pos') matchesType = inv.type === 'Bon de commande';
+
+    let matchesStatus = true;
+    if (hideCompleted && inv.status === 'paid') {
+      matchesStatus = false;
+    }
+
+    return matchesSearch && matchesType && matchesStatus;
   });
 
   return (
@@ -138,33 +234,43 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">En attente</span>
-            <Clock size={20} className="text-amber-400" />
+      {/* Zone des Cartes de Statistiques avec Filtre Temporel */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">Vue d'ensemble</h3>
+          <div className="flex items-center space-x-2 bg-white/5 rounded-xl p-1 border border-white/10">
+            <Calendar size={16} className="text-gray-400 ml-3" />
+            <select 
+              value={timeFilter} 
+              onChange={(e) => setTimeFilter(e.target.value)}
+              className="bg-transparent border-none text-sm font-medium text-white focus:outline-none focus:ring-0 py-1 pr-4 pl-2 cursor-pointer appearance-none"
+            >
+              <option value="month" className="bg-[#1a1a1a]">Ce mois</option>
+              <option value="last_month" className="bg-[#1a1a1a]">Le mois dernier</option>
+              <option value="year" className="bg-[#1a1a1a]">Cette année</option>
+              <option value="all" className="bg-[#1a1a1a]">Toujours</option>
+            </select>
           </div>
-          <div className="text-2xl font-bold">1 560,00 €</div>
-          <div className="text-xs text-amber-400/80">3 documents à relancer</div>
-        </div>
-        
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Payé (ce mois)</span>
-            <CheckCircle2 size={20} className="text-emerald-400" />
-          </div>
-          <div className="text-2xl font-bold">3 240,00 €</div>
-          <div className="text-xs text-emerald-400/80">+12% par rapport au mois dernier</div>
         </div>
 
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Bons de commande</span>
-            <FileText size={20} className="text-lilas" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="glass-card p-6 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">En attente (Factures)</span>
+              <Clock size={20} className="text-amber-400" />
+            </div>
+            <div className="text-2xl font-bold">{pendingAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</div>
+            <div className="text-xs text-amber-400/80">{pendingCount} facture(s) en attente</div>
           </div>
-          <div className="text-2xl font-bold">4 800,00 €</div>
-          <div className="text-xs text-lilas/80">Volume total en cours</div>
+          
+          <div className="glass-card p-6 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Encaissé (Factures)</span>
+              <CheckCircle2 size={20} className="text-emerald-400" />
+            </div>
+            <div className="text-2xl font-bold">{paidAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</div>
+            <div className="text-xs text-emerald-400/80">Sur la période sélectionnée</div>
+          </div>
         </div>
       </div>
 
@@ -177,7 +283,7 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
             placeholder="Rechercher une facture ou un client..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-dark-bg border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:outline-none focus:border-lilas/50 transition-all"
+            className="w-full bg-transparent border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:outline-none focus:border-lilas/50 transition-all"
           />
         </div>
         
@@ -205,6 +311,17 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
             className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'invoices' ? 'bg-lilas text-black' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
           >
             Factures
+          </button>
+
+          <div className="w-px h-6 bg-white/10 mx-1"></div>
+
+          <button 
+            onClick={() => setHideCompleted(!hideCompleted)}
+            className={`px-3 py-2 flex items-center space-x-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${hideCompleted ? 'bg-white/10 text-white' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
+            title="Masquer/Afficher les documents signés ou encaissés"
+          >
+            <Filter size={16} />
+            <span>{hideCompleted ? 'En cours' : 'Tous les statuts'}</span>
           </button>
           
           <button 
@@ -239,7 +356,7 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
                   <td colSpan={7} className="px-6 py-12 text-center text-gray-500 italic">
                     {hasApiKey === false 
                       ? "Veuillez configurer votre clé API Abby dans les paramètres pour voir vos documents."
-                      : "Aucun document trouvé."}
+                      : "Aucun document ne correspond à vos filtres."}
                   </td>
                 </tr>
               )}
@@ -256,16 +373,24 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
                       inv.status === 'sent' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
                       'bg-gray-500/10 text-gray-400 border border-gray-500/20'
                     }`}>
-                      {inv.status === 'paid' ? 'Payé' : inv.status === 'sent' ? 'Envoyé' : 'Brouillon'}
+                      {inv.statusLabel || 'Brouillon'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" title="Télécharger PDF">
+                      <button 
+                        onClick={() => handleDownloadPDF(inv)}
+                        className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" 
+                        title="Télécharger PDF"
+                      >
                         <Download size={16} />
                       </button>
-                      <button className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" title="Voir dans Abby">
-                        <ExternalLink size={16} />
+                      <button 
+                        onClick={() => handlePreviewPDF(inv)}
+                        className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" 
+                        title="Visualiser le document"
+                      >
+                        <Eye size={16} />
                       </button>
                     </div>
                   </td>

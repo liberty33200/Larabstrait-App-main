@@ -7,12 +7,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, 
   Users, 
+  Download,
   Clock, 
   Plus, 
   Search, 
   LayoutDashboard, 
   Settings, 
   LogOut,
+  Eye,
   ChevronRight,
   ChevronDown,
   MoreVertical,
@@ -2267,28 +2269,101 @@ const AccountingView = ({ appointments, rules, loading }: any) => {
   );
 };
 
-const ClientsView = ({ clients, appointments, onSelectAppointment }: any) => {
+const ClientsView = ({ clients, appointments, onSelectAppointment, apiFetch }: any) => {
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [sortBy, setSortBy] = useState('alpha');
+
+  // --- LOGIQUE ABBY ---
+  const [clientDocuments, setClientDocuments] = useState<any[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkKey = async () => {
+      if (!apiFetch) return;
+      try {
+        const res = await apiFetch('/api/settings/abby');
+        if (res.ok) {
+          const data = await res.json();
+          setHasApiKey(!!data.abby_api_key);
+        }
+      } catch (err) {
+        console.error("Erreur check clé Abby:", err);
+      }
+    };
+    checkKey();
+  }, [apiFetch]);
+
+  useEffect(() => {
+    const fetchClientDocuments = async () => {
+      if (!hasApiKey || !selectedClient || !apiFetch) return;
+      setLoadingDocs(true);
+      try {
+        const res = await apiFetch('/api/abby/documents');
+        if (res.ok) {
+          const allDocs = await res.json();
+          // On reconstruit le nom complet du client pour faire la recherche
+          const clientName = (selectedClient.displayName || `${selectedClient.firstName || ''} ${selectedClient.lastName || ''}`).toLowerCase().trim();
+          
+          const matchingDocs = allDocs.filter((doc: any) => {
+            if (!doc || !doc.client) return false;
+            // On vérifie si le nom du client est inclus, c'est plus souple
+            return doc.client.toLowerCase().includes(clientName) || clientName.includes(doc.client.toLowerCase());
+          });
+          setClientDocuments(matchingDocs);
+        }
+      } catch (err) {
+        console.error("Erreur fetch documents:", err);
+      } finally {
+        setLoadingDocs(false);
+      }
+    };
+    fetchClientDocuments();
+  }, [hasApiKey, selectedClient, apiFetch]);
+
+  const handleDownloadPDF = async (inv: any) => {
+    if (!apiFetch) return;
+    try {
+      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf`);
+      if (!res.ok) throw new Error("Erreur");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${inv.type}_${inv.id}.pdf`; 
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) { alert("Impossible de télécharger le PDF."); }
+  };
+
+  const handlePreviewPDF = async (inv: any) => {
+    if (!apiFetch) return;
+    try {
+      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf?inline=true`);
+      if (!res.ok) throw new Error("Erreur");
+      const blob = await res.blob();
+      const file = new Blob([blob], { type: 'application/pdf' });
+      const url = URL.createObjectURL(file);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) { alert("Impossible de prévisualiser le PDF."); }
+  };
+  // --- FIN LOGIQUE ABBY ---
 
   const clientsWithStats = useMemo(() => {
     return clients.map((client: any) => {
       const clientAppts = appointments.filter((appt: any) => {
         if (appt.isTimeOff) return false;
-        
         const apptEmail = (appt.clientEmail || "").toLowerCase().trim();
         const clientEmail = (client.email || "").toLowerCase().trim();
-        
-        // 1. Match par email (prioritaire pour le regroupement)
         if (clientEmail && apptEmail && apptEmail === clientEmail) return true;
-        
-        // 2. Match par nom si pas d'email
         if (!clientEmail && !apptEmail) {
           const apptName = (appt.client || "").toLowerCase().trim();
           const clientName = (client.displayName || client.firstName || "").toLowerCase().trim();
           return apptName && apptName === clientName;
         }
-
         return false;
       });
 
@@ -2297,43 +2372,29 @@ const ClientsView = ({ clients, appointments, onSelectAppointment }: any) => {
         return sum + amount;
       }, 0);
       
-      return {
-        ...client,
-        appointmentCount: clientAppts.length,
-        totalSpent
-      };
+      return { ...client, appointmentCount: clientAppts.length, totalSpent };
     });
   }, [clients, appointments]);
 
   const sortedClients = useMemo(() => {
     const list = [...clientsWithStats];
-    if (sortBy === 'alpha') {
-      return list.sort((a, b) => (a.displayName || a.firstName || "").localeCompare(b.displayName || b.firstName || ""));
-    } else if (sortBy === 'appointments') {
-      return list.sort((a, b) => b.appointmentCount - a.appointmentCount);
-    } else if (sortBy === 'spending') {
-      return list.sort((a, b) => b.totalSpent - a.totalSpent);
-    }
+    if (sortBy === 'alpha') return list.sort((a, b) => (a.displayName || a.firstName || "").localeCompare(b.displayName || b.firstName || ""));
+    if (sortBy === 'appointments') return list.sort((a, b) => b.appointmentCount - a.appointmentCount);
+    if (sortBy === 'spending') return list.sort((a, b) => b.totalSpent - a.totalSpent);
     return list;
   }, [clientsWithStats, sortBy]);
 
   if (selectedClient) {
     const clientAppointments = appointments.filter((appt: any) => {
       if (appt.isTimeOff) return false;
-
       const apptEmail = (appt.clientEmail || "").toLowerCase().trim();
       const clientEmail = (selectedClient.email || "").toLowerCase().trim();
-      
-      // 1. Match par email
       if (clientEmail && apptEmail && apptEmail === clientEmail) return true;
-
-      // 2. Match par nom si pas d'email
       if (!clientEmail && !apptEmail) {
         const apptName = (appt.client || "").toLowerCase().trim();
         const clientName = (selectedClient.displayName || selectedClient.firstName || "").toLowerCase().trim();
         return apptName && apptName === clientName;
       }
-
       return false;
     });
 
@@ -2405,6 +2466,59 @@ const ClientsView = ({ clients, appointments, onSelectAppointment }: any) => {
             </table>
           </div>
         </div>
+
+        {/* NOUVELLE ZONE : DOCUMENTS ABBY */}
+        {hasApiKey && (
+          <div className="glass-card overflow-hidden mt-6">
+            <div className="p-6 border-b border-white/5 flex items-center space-x-2">
+              <FileText size={20} className="text-lilas" />
+              <h3 className="font-bold text-lg">Documents comptables (Abby)</h3>
+            </div>
+            
+            <div className="p-6">
+              {loadingDocs ? (
+                <div className="text-sm text-gray-400 flex items-center justify-center py-4">
+                  <RefreshCw size={16} className="animate-spin mr-2" /> Chargement des documents...
+                </div>
+              ) : clientDocuments.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {clientDocuments.map((inv: any) => (
+                    <div key={inv.id} className="p-4 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors flex items-center justify-between group">
+                      <div>
+                        <div className="flex items-center space-x-3 mb-1">
+                          <span className="font-bold text-sm">{inv.type} {inv.id}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            inv.status === 'paid' ? 'bg-emerald-500/10 text-emerald-400' :
+                            inv.status === 'sent' ? 'bg-blue-500/10 text-blue-400' :
+                            'bg-gray-500/10 text-gray-400'
+                          }`}>
+                            {inv.statusLabel || 'Brouillon'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {inv.date} • <span className="font-bold text-white">{inv.amount}€</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => handleDownloadPDF(inv)} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors" title="Télécharger">
+                          <Download size={16} />
+                        </button>
+                        <button onClick={() => handlePreviewPDF(inv)} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors" title="Aperçu">
+                          <Eye size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6">
+                  <p className="text-sm text-gray-500 italic">Aucun document Abby trouvé pour ce client.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </motion.div>
     );
   }
@@ -2417,7 +2531,6 @@ const ClientsView = ({ clients, appointments, onSelectAppointment }: any) => {
     >
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-3xl font-bold">Fiches clients</h2>
-        
         <div className="flex items-center space-x-3 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
           <Filter size={18} className="text-gray-400" />
           <select 
@@ -2444,7 +2557,6 @@ const ClientsView = ({ clients, appointments, onSelectAppointment }: any) => {
               <h4 className="font-bold text-lg group-hover:text-lilas transition-colors">{client.displayName || `${client.firstName} ${client.lastName}`}</h4>
               <p className="text-gray-400 text-sm truncate">{client.email}</p>
             </div>
-
             <div className="flex justify-between items-end mt-6 pt-4 border-t border-white/5">
               <div className="flex flex-col">
                 <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Rendez-vous</span>
@@ -3836,7 +3948,7 @@ export default function App() {
           ) : activeTab === 'billing' ? (
             <BillingView key="billing" appointments={filteredAppointments} clients={filteredClients} apiFetch={apiFetch} />
           ) : activeTab === 'clients' ? (
-            <ClientsView key="clients" clients={filteredClients} appointments={filteredAppointments} onSelectAppointment={setSelectedAppointment} />
+            <ClientsView key="clients" clients={filteredClients} appointments={filteredAppointments} onSelectAppointment={setSelectedAppointment} apiFetch={apiFetch} />
           ) : activeTab === 'settings' ? (
             <SettingsView 
               key="settings" 

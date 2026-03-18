@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  larabstrait:
+    build: .
+    container_name: larabstrait-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Tu pourras ajouter d'autres variables d'environnement ici si besoin
+    volumes:
+      # Ceci permet de sauvegarder ta base de données de notifications/paramètres sur le NAS
+      - ./data:/app/data
