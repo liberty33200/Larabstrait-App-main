@@ -6,15 +6,21 @@ services:
     container_name: larabstrait-app
     restart: unless-stopped
     ports:
-      # On utilise le port 3050 à l'extérieur pour éviter tout conflit sur le NAS
-      # (Il faudra juste mettre 3050 dans le proxy inversé plus tard)
       - "3050:3000"
     environment:
       - NODE_ENV=production
+      # On fait le pont pour Microsoft
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      # On fait le pont pour l'URL de l'app et les notifications
+      - REDIRECT_URI=${REDIRECT_URI}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      # Ajoute ici d'autres variables si tu en as dans ton .env (Abby, etc.)
     volumes:
-      # On utilise un volume nommé, Portainer gérera le dossier tout seul comme un grand
       - larabstrait_data:/app/data
 
-# On déclare le volume nommé ici
 volumes:
   larabstrait_data:
