@@ -6,10 +6,15 @@ services:
     container_name: larabstrait-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # On utilise le port 3050 à l'extérieur pour éviter tout conflit sur le NAS
+      # (Il faudra juste mettre 3050 dans le proxy inversé plus tard)
+      - "3050:3000"
     environment:
       - NODE_ENV=production
-      # Tu pourras ajouter d'autres variables d'environnement ici si besoin
     volumes:
-      # Ceci permet de sauvegarder ta base de données de notifications/paramètres sur le NAS
-      - ./data:/app/data
+      # On utilise un volume nommé, Portainer gérera le dossier tout seul comme un grand
+      - larabstrait_data:/app/data
+
+# On déclare le volume nommé ici
+volumes:
+  larabstrait_data:
