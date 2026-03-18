@@ -119,17 +119,22 @@ async function startServer() {
     const host = req.get('host') || "";
     const xForwardedHost = req.get('x-forwarded-host') || "";
     
-    let baseUrl = "";
-    if (host.includes('run.app') || xForwardedHost.includes('run.app') || (origin && origin.includes('run.app'))) {
-      const effectiveHost = xForwardedHost.split(',')[0].trim() || host;
-      baseUrl = `https://${effectiveHost}`;
-    } else if (origin && origin.startsWith('http')) {
-      baseUrl = origin;
-    } else if (host.includes('localhost')) {
-      baseUrl = `http://localhost:3000`;
-    } else {
-      baseUrl = "https://larabstrait-gestion-tatouage-467160233238.us-west1.run.app";
-    }
+    // On essaie d'abord d'utiliser la variable d'environnement définie dans Portainer
+let baseUrl = process.env.APP_URL || "";
+
+if (!baseUrl) {
+  if (host.includes('run.app') || xForwardedHost.includes('run.app') || (origin && origin.includes('run.app'))) {
+    const effectiveHost = xForwardedHost.split(',')[0].trim() || host;
+    baseUrl = `https://${effectiveHost}`;
+  } else if (origin && origin.startsWith('http')) {
+    baseUrl = origin;
+  } else if (host.includes('localhost')) {
+    baseUrl = `http://localhost:3000`;
+  } else {
+    // Si vraiment rien n'est défini, on met ton adresse NAS par défaut
+    baseUrl = "https://app.larabstrait.fr";
+  }
+}
 
     baseUrl = baseUrl.replace(/\/+$/, '');
     if (baseUrl.includes('localhost') && (host.includes('run.app') || xForwardedHost.includes('run.app'))) {
