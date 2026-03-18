@@ -15,6 +15,8 @@ services:
       - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
       # On fait le pont pour l'URL de l'app et les notifications
       - REDIRECT_URI=${REDIRECT_URI}
+      - REDIRECT_URL=${REDIRECT_URL}
+      - APP_URL=${APP_URL}
       - SESSION_SECRET=${SESSION_SECRET}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
