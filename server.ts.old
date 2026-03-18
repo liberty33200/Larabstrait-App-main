@@ -1,0 +1,842 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import dotenv from "dotenv";
+import session from "express-session";
+import cookieParser from "cookie-parser";
+import * as msal from "@azure/msal-node";
+import webpush from "web-push";
+import Database from "better-sqlite3";
+import axios from "axios";
+import Abby from "@abby-inc/node";
+import { fetchDataverse, updateDataverse, createDataverse, deleteDataverse } from "./dataverseService";
+import { fetchGraph, fetchBookingTimeOff } from "./graphService";
+
+dotenv.config();
+
+// Initialisation de la base de données pour les notifications et paramètres
+const db = new Database('notifications.db');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription TEXT UNIQUE,
+    user_id TEXT
+  );
+  
+  CREATE TABLE IF NOT EXISTS user_settings (
+    user_id TEXT PRIMARY KEY,
+    abby_api_key TEXT
+  );
+`);
+
+// Configuration Web Push
+// IMPORTANT : Ces clés sont STABLES et VALIDES. Elles ont été générées pour ce projet.
+const vapidKeys = {
+  publicKey: process.env.VAPID_PUBLIC_KEY || 'BOL1mjmDT2wcuCh-ToFzWu6o9oIjq4FVr85uKtosGYsvA3beiLNqf4YPFHddtBPqfVbfTgRRN6rLCcX3vrXUQhM',
+  privateKey: process.env.VAPID_PRIVATE_KEY || 'R0V328V-nSSnmYHPj5xpvtVKx7vzs1Ix82kpd9tsvHY'
+};
+
+
+webpush.setVapidDetails(
+  'mailto:florent.bidard@gmail.com',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
+
+declare module "express-session" {
+  interface SessionData {
+    user: any;
+  }
+}
+
+const isProd = process.env.NODE_ENV === "production";
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+  const msalConfig: msal.Configuration = {
+    auth: {
+      clientId: process.env.MICROSOFT_CLIENT_ID || "missing-client-id",
+      authority: `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID || "common"}`,
+      clientSecret: process.env.MICROSOFT_CLIENT_SECRET || "missing-client-secret",
+    }
+  };
+
+  let cca: msal.ConfidentialClientApplication;
+  try {
+    cca = new msal.ConfidentialClientApplication(msalConfig);
+  } catch (error) {
+    console.error("MSAL Init Error:", error);
+    cca = {} as any;
+  }
+
+  app.set('trust proxy', true);
+  app.use(express.json());
+  app.use(cookieParser());
+  
+  const sessionSecret = process.env.SESSION_SECRET || "tattoo-studio-secret-v3";
+  const tokenSessions = new Map<string, any>();
+
+  app.use(session({
+    name: 'larabstrait_session',
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: true,
+    proxy: true,
+    cookie: {
+      secure: true,
+      sameSite: 'none',
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000
+    }
+  }));
+
+  app.use('/api', (req: any, res, next) => {
+    const authHeader = req.headers.authorization;
+    const bypassHeader = req.headers['x-dev-bypass'];
+
+    // Bypass pour l'aperçu AI Studio (iframe)
+    if (bypassHeader === 'true') {
+      req.session.user = {
+        name: "Aperçu AI Studio",
+        username: "preview@aistudio.google",
+        homeAccountId: "bypass-id"
+      };
+      return next();
+    }
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const tokenUser = tokenSessions.get(token);
+      if (tokenUser) {
+        req.session.user = tokenUser;
+      }
+    }
+    next();
+  });
+
+  const getRedirectUri = (req: any) => {
+    const origin = req.query.origin as string;
+    const host = req.get('host') || "";
+    const xForwardedHost = req.get('x-forwarded-host') || "";
+    
+    console.log(">>> [AUTH] Request Details:", { host, xForwardedHost, origin });
+
+    // 1. DETERMINER LA BASE URL
+    let baseUrl = "";
+
+    // Si on est sur Cloud Run ou AI Studio (domaines .run.app)
+    if (host.includes('run.app') || xForwardedHost.includes('run.app') || (origin && origin.includes('run.app'))) {
+      // On prend l'hôte le plus probable
+      const effectiveHost = xForwardedHost.split(',')[0].trim() || host;
+      baseUrl = `https://${effectiveHost}`;
+    } 
+    // Si on a une origine explicite du client
+    else if (origin && origin.startsWith('http')) {
+      baseUrl = origin;
+    }
+    // Fallback Localhost (uniquement si on est vraiment en local)
+    else if (host.includes('localhost')) {
+      baseUrl = `http://localhost:3000`;
+    }
+    // Fallback de sécurité : Prod
+    else {
+      baseUrl = "https://larabstrait-gestion-tatouage-467160233238.us-west1.run.app";
+    }
+
+    // Nettoyage final
+    baseUrl = baseUrl.replace(/\/+$/, '');
+    
+    // SECURITÉ : Si par erreur on a encore du localhost alors qu'on est sur le cloud
+    if (baseUrl.includes('localhost') && (host.includes('run.app') || xForwardedHost.includes('run.app'))) {
+       baseUrl = `https://${xForwardedHost.split(',')[0].trim() || host}`;
+    }
+
+    const uri = `${baseUrl}/api/auth/callback`;
+    console.log(">>> [AUTH] Final Redirect URI:", uri);
+    return uri;
+  };
+
+  app.get("/api/auth/url", (req, res) => {
+    const authCodeUrlParameters = {
+      scopes: ["user.read"],
+      redirectUri: getRedirectUri(req),
+    };
+    cca.getAuthCodeUrl(authCodeUrlParameters).then((url) => {
+      res.json({ url });
+    }).catch((error) => res.status(500).json({ error: error.message }));
+  });
+
+  app.get("/api/auth/login", (req, res) => {
+    const authCodeUrlParameters = {
+      scopes: ["user.read"],
+      redirectUri: getRedirectUri(req),
+    };
+    cca.getAuthCodeUrl(authCodeUrlParameters).then((response) => {
+      res.redirect(response);
+    }).catch((error) => res.status(500).send(error));
+  });
+
+  app.get("/api/auth/status", (req: any, res) => {
+    res.json({ isAuthenticated: !!req.session.user, user: req.session.user || null });
+  });
+
+  app.get("/api/auth/callback", (req, res) => {
+    const tokenRequest = {
+      code: req.query.code as string,
+      scopes: ["user.read"],
+      redirectUri: getRedirectUri(req),
+    };
+    cca.acquireTokenByCode(tokenRequest).then((response) => {
+      if (response.account) {
+        const userData = {
+          homeAccountId: response.account.homeAccountId,
+          username: response.account.username,
+          name: response.account.name
+        };
+        req.session.user = userData;
+        const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        tokenSessions.set(token, userData);
+        
+        res.send(`
+          <html>
+            <head>
+              <title>Connexion réussie</title>
+              <style>
+                body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #141414; color: white; text-align: center; }
+                .btn { background: #d1b3ff; color: black; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px; }
+              </style>
+            </head>
+            <body>
+              <h2>Connexion réussie !</h2>
+              <p>Cette fenêtre va se fermer automatiquement.</p>
+              <button class="btn" onclick="window.close()">Fermer maintenant</button>
+              <script>
+                const token = "${token}";
+                localStorage.setItem('larabstrait_token', token);
+                localStorage.setItem('msal_login_success', Date.now().toString());
+                
+                try {
+                  const bc = new BroadcastChannel('larabstrait_auth');
+                  bc.postMessage({ type: 'OAUTH_AUTH_SUCCESS', token: token });
+                } catch (e) {}
+
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', token: token }, '*');
+                }
+
+                setTimeout(() => {
+                  window.close();
+                  setTimeout(() => {
+                    if (!window.closed) {
+                       window.location.href = "/?token=" + token;
+                    }
+                  }, 1000);
+                }, 500);
+              </script>
+            </body>
+          </html>
+        `);
+      } else {
+        res.redirect("/");
+      }
+    }).catch((error) => res.status(500).send(error));
+  });
+
+  app.get("/api/auth/user", (req: any, res) => {
+    res.json(req.session.user || null);
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy(() => res.json({ success: true }));
+  });
+
+  app.get("/api/appointments", async (req, res) => {
+    try {
+      const entity = 'cr7e0_gestiontatouage';
+      const entityAlt = 'cr7e0_gestiontatouages';
+      let data = null;
+      let lastError = null;
+      for (const name of [entity, entityAlt]) {
+        try {
+          // On ne demande plus l'expansion de la fiche client car on dérive les clients des RDV
+          data = await fetchDataverse(name);
+          if (data) break;
+        } catch (err: any) {
+          lastError = err;
+        }
+      }
+      if (data) res.json(data);
+      else res.status(404).json({ error: "Table introuvable", details: lastError?.message });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.patch("/api/appointments/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updateData = req.body;
+      const entity = 'cr7e0_gestiontatouages';
+      const entityAlt = 'cr7e0_gestiontatouage';
+      let result = null;
+      let lastError = null;
+      for (const name of [entity, entityAlt]) {
+        try {
+          result = await updateDataverse(name, id, updateData);
+          if (result) break;
+        } catch (err: any) {
+          lastError = err;
+          if (!err.message.includes('404') && !err.message.includes('not found')) break;
+        }
+      }
+      if (!result && lastError) throw lastError;
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      console.error("Erreur PATCH appointment:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/appointments", async (req, res) => {
+    try {
+      const createData = req.body;
+      const entity = 'cr7e0_gestiontatouages';
+      const entityAlt = 'cr7e0_gestiontatouage';
+      let result = null;
+      let lastError = null;
+      for (const name of [entity, entityAlt]) {
+        try {
+          result = await createDataverse(name, createData);
+          if (result) break;
+        } catch (err: any) {
+          lastError = err;
+          if (!err.message.includes('404') && !err.message.includes('not found')) break;
+        }
+      }
+      if (!result && lastError) throw lastError;
+      res.status(201).json(result);
+    } catch (error: any) {
+      console.error("Erreur POST appointment:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/appointments/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const entity = 'cr7e0_gestiontatouages';
+      const entityAlt = 'cr7e0_gestiontatouage';
+      let success = false;
+      let lastError = null;
+      for (const name of [entity, entityAlt]) {
+        try {
+          success = await deleteDataverse(name, id);
+          if (success) break;
+        } catch (err: any) {
+          lastError = err;
+          if (!err.message.includes('404') && !err.message.includes('not found')) break;
+        }
+      }
+      if (!success && lastError) throw lastError;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erreur DELETE appointment:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Endpoints clients supprimés car la base est dérivée des rendez-vous
+
+  app.get("/api/bookings/businesses", async (req, res) => {
+    try {
+      const data = await fetchGraph("solutions/bookingBusinesses");
+      res.json(data);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.get("/api/bookings/timeoff", async (req, res) => {
+    try {
+      const businessId = process.env.MICROSOFT_BOOKING_BUSINESS_ID;
+      if (!businessId) {
+        return res.status(400).json({ error: "MICROSOFT_BOOKING_BUSINESS_ID non configuré" });
+      }
+      const data = await fetchBookingTimeOff(businessId);
+      res.json(data);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.get("/api/dataverse/:entity", async (req, res) => {
+    try {
+      const { $select, $filter, $expand } = req.query as any;
+      const data = await fetchDataverse(req.params.entity, $select, $filter, $expand);
+      res.json(data);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.get("/api/settings/abby", (req: any, res) => {
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    try {
+      const settings = db.prepare('SELECT abby_api_key FROM user_settings WHERE user_id = ?').get(userId) as any;
+      res.json({ abby_api_key: settings?.abby_api_key || '' });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur lors de la récupération des paramètres" });
+    }
+  });
+
+  app.post("/api/settings/abby", express.json(), (req: any, res) => {
+    const { abby_api_key } = req.body;
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    console.log(`[Settings] Sauvegarde clé Abby pour userId: ${userId}, Longueur: ${abby_api_key?.length}`);
+    try {
+      const stmt = db.prepare('INSERT OR REPLACE INTO user_settings (user_id, abby_api_key) VALUES (?, ?)');
+      stmt.run(userId, abby_api_key?.trim());
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[Settings] Erreur sauvegarde:", error);
+      res.status(500).json({ error: "Erreur lors de l'enregistrement des paramètres" });
+    }
+  });
+
+  // Helper pour obtenir une instance du SDK Abby
+  const getAbbyClient = () => {
+  const apiKey = process.env.ABBY_API_KEY;
+
+  if (!apiKey) {
+    console.error("ABBY_API_KEY manquante dans .env");
+    return null;
+  }
+
+  try {
+    return new Abby({ apiKey });
+  } catch (e) {
+    return new Abby(apiKey as any);
+  }
+};
+
+  // Helper pour gérer les erreurs Abby (SDK ou Axios)
+  const handleAbbyError = (err: any, res: any, context: string) => {
+    const status = err.status || err.response?.status || 500;
+    const abbyData = err.data || err.response?.data;
+    
+    console.error(`[Abby Error] ${context}:`, abbyData || err.message);
+
+    if (abbyData && abbyData.message) {
+      return res.status(status).json({
+        error: abbyData.message,
+        type: abbyData.type,
+        code: abbyData.code,
+        param: abbyData.param
+      });
+    }
+    
+    return res.status(status).json({ error: err.message });
+  };
+
+app.get("/api/abby/test-connection", async (req: any, res) => {
+
+  try {
+
+    const abby = getAbbyClient();
+
+    if (!abby) {
+      return res.status(400).json({ error: "Clé API Abby non configurée" });
+    }
+
+    const client = abby.getClient();
+
+    const response = await abby.contact.retrieveContacts({
+  query: { limit: 1 }
+});
+
+    res.json({
+      success: true,
+      message: "Connexion Abby OK",
+      data: response.data
+    });
+
+  } catch (err: any) {
+
+    console.error("ABBY TEST ERROR:", err?.response?.data || err.message);
+
+    res.status(500).json({
+      error: "Erreur connexion Abby",
+      details: err?.response?.data || err.message
+    });
+
+  }
+
+});
+
+  app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
+    const { appointment, type } = req.body;
+
+    
+    try {
+      const abby = getAbbyClient();
+      if (!abby) {
+        return res.status(400).json({ error: "Clé API Abby non configurée" });
+      }
+
+      // 1. Recherche ou création du client
+      let customerId = '';
+      const { data: contacts } = await abby.contact.retrieveContacts({ 
+        query: { search: appointment.client, limit: 1 } 
+      });
+      
+      const foundContact = contacts.docs?.[0];
+      
+      if (foundContact) {
+        customerId = foundContact.id;
+      } else {
+        // Création d'un nouveau contact particulier
+        const names = appointment.client.split(' ');
+        const firstname = names[0] || 'Client';
+        const lastname = names.slice(1).join(' ') || 'Inconnu';
+        
+        const { data: newContact } = await abby.contact.createContact({
+          body: { firstname, lastname }
+        });
+        customerId = newContact.id;
+      }
+
+      if (type === 'Recette') {
+        // Utilisation du client raw car incomeBook n'est pas encore dans les services typés du SDK
+        const client = abby.getClient();
+        const payload = {
+          paidAt: new Date(appointment.date).toISOString(),
+          paymentMethodUsed: { value: 1 },
+          vatAmount: 0,
+          vatId: 1,
+          client: appointment.client,
+          priceWithoutTax: Math.round(appointment.total * 100),
+          priceTotalTax: Math.round(appointment.total * 100),
+          reference: `RDV-${appointment.id}`,
+          productType: 1,
+          isSap: false,
+          isTaxIncluded: true
+        };
+        const { data } = await client.post({ url: '/incomeBook', body: payload });
+        return res.json({ success: true, data });
+      } 
+      
+      if (type === 'Facture' || type === "Facture d'acompte" || type === "Facture finale") {
+        // 2. Création de la facture (Brouillon)
+        // @ts-ignore
+        const { data: invoice } = await abby.invoice.createInvoiceByContactOrOrganizationId({ 
+          path: { customerId } 
+        });
+        const invoiceId = invoice.id;
+
+        // 3. Ajout des lignes
+        const amount = type === "Facture d'acompte" ? appointment.depositAmount : appointment.total;
+        const linesPayload = {
+          lines: [
+            {
+              designation: appointment.style || "Prestation de tatouage",
+              quantity: 1,
+              quantityUnit: "unit", 
+              unitPrice: Math.round(amount * 100),
+              type: "service_delivery", 
+              vatCode: "FR_00HT"
+            }
+          ]
+        };
+        
+        // @ts-ignore
+        await abby.billing.updateLines({ 
+          path: { billingId: invoiceId }, 
+          body: linesPayload as any 
+        });
+
+        // 4. Mise à jour du titre et de la date d'échéance
+        // @ts-ignore
+        await abby.invoice.updateTimeline({
+          path: { invoiceId },
+          body: {
+            emittedAt: new Date(appointment.date).getTime(),
+            paymentDelay: "at_reception"
+          }
+        });
+
+        return res.json({ success: true, data: { id: invoiceId, message: "Facture créée en brouillon" } });
+      }
+
+      return res.status(400).json({ error: "Type de document non supporté" });
+    } catch (err: any) {
+      handleAbbyError(err, res, `Create Document (${type})`);
+    }
+  });
+
+  app.get("/api/abby/documents", async (req: any, res) => {
+
+  try {
+    const abby = getAbbyClient();
+      if (!abby) {
+        return res.status(400).json({ error: "Clé API Abby non configurée" });
+      }
+
+      const client = abby.getClient();
+      
+      // Log sécurisé pour débugger la clé
+      const settings = db.prepare('SELECT abby_api_key FROM user_settings WHERE user_id = ?').get(userId) as any;
+      const key = settings?.abby_api_key || '';
+      console.log(`[Abby Documents] Fetching for user: ${userId}. Key length: ${key.length}. Prefix: ${key.substring(0, 4)}...`);
+
+      // Extraction des documents en gérant les structures possibles (docs ou data)
+      const extract = (res: any) => {
+        const body = res.data;
+        if (!body) return [];
+        if (Array.isArray(body)) return body;
+        if (body.docs && Array.isArray(body.docs)) return body.docs;
+        if (body.data && Array.isArray(body.data)) return body.data;
+        return [];
+      };
+
+      // On tente plusieurs endpoints probables car l'API Abby a plusieurs versions et structures
+      const tryEndpoints = async (paths: string[]) => {
+        for (const path of paths) {
+          try {
+            // Si client est un AxiosInstance, on utilise la signature standard
+            const res = await (client.get.length === 1 ? client.get({ url: path, query: { limit: 100 } }) : client.get(path, { params: { limit: 100 } }));
+            const docs = extract(res);
+            if (docs && docs.length > 0) return docs;
+          } catch (e) {
+            // Silently continue to next path
+          }
+        }
+        return [];
+      };
+
+      const [invs, quotes, pos] = await Promise.all([
+        tryEndpoints(['/billing/invoices', '/billing/invoice', '/invoices', '/invoice', '/v2/invoices', '/v2/billing/invoices', '/v1/invoices']),
+        tryEndpoints(['/billing/estimates', '/billing/estimate', '/estimates', '/estimate', '/v2/estimates', '/v2/billing/estimates', '/v1/estimates']),
+        tryEndpoints(['/billing/purchase-orders', '/billing/purchase-order', '/purchase-orders', '/purchase-order', '/v2/purchase-orders', '/v2/billing/purchase-orders', '/v1/purchase-orders'])
+      ]);
+
+      console.log(`[Abby Documents] Found: ${invs.length} invoices, ${quotes.length} quotes, ${pos.length} POs`);
+      
+      const allDocsMap = new Map();
+      invs.forEach(d => { if (d.id || d.number) allDocsMap.set(d.id || d.number, { ...d, type: 'invoice' }); });
+      quotes.forEach(d => { if (d.id || d.number) allDocsMap.set(d.id || d.number, { ...d, type: 'quote' }); });
+      pos.forEach(d => { if (d.id || d.number) allDocsMap.set(d.id || d.number, { ...d, type: 'purchase-order' }); });
+      
+      const allDocs = Array.from(allDocsMap.values());
+
+      console.log(`[Abby Documents] Total docs uniques: ${allDocs.length}`);
+
+      console.log(`[Abby Documents] Total docs uniques: ${allDocs.length} (Invoices: ${invs.length}, Quotes: ${quotes.length}, POs: ${pos.length})`);
+
+      const formattedDocs = allDocs.map((doc: any) => {
+        let status = 'draft';
+        // Mapping des statuts (numériques ou textuels)
+        const s = (doc.status || doc.state || '').toString().toLowerCase();
+        if (s === 'paid' || s === 'payée' || s === '4') status = 'paid';
+        else if (['sent', 'envoyée', 'accepted', 'acceptée', 'validated', 'validée', 'pending', 'en attente', '2', '3'].includes(s)) status = 'sent';
+
+        // Calcul du montant (souvent en centimes dans l'API v2)
+        let amount = 0;
+        if (doc.total_incl_tax !== undefined) amount = doc.total_incl_tax / 100;
+        else if (doc.total?.amountWithTaxAfterDiscount !== undefined) amount = doc.total.amountWithTaxAfterDiscount / 100;
+        else if (doc.amount !== undefined) amount = doc.amount / 100;
+
+        return {
+          id: doc.number || doc.id || 'N/A',
+          client: doc.customer_name || doc.customer?.name || doc.client_name || 'Client inconnu',
+          type: doc.type === 'invoice' || doc.number?.startsWith('FA') ? 'Facture' : 
+                doc.type === 'quote' || doc.number?.startsWith('DE') ? 'Devis' : 
+                doc.type === 'purchase-order' || doc.number?.startsWith('BC') ? 'Bon de commande' : 'Document',
+          amount: amount,
+          date: doc.date || doc.emittedAt ? new Date(doc.date || doc.emittedAt).toLocaleDateString('fr-FR') : 'N/A',
+          status: status
+        };
+      });
+
+      formattedDocs.sort((a: any, b: any) => {
+        const dateA = a.date.split('/').reverse().join('-');
+        const dateB = b.date.split('/').reverse().join('-');
+        return dateB.localeCompare(dateA);
+      });
+
+      res.json(formattedDocs);
+    } catch (error: any) {
+      handleAbbyError(error, res, "Fetch Documents");
+    }
+  });
+
+  // Nouveau : Livre des achats (Purchase Register)
+  app.post("/api/abby/purchase-register", express.json(), async (req: any, res) => {
+    
+    try {
+      const abby = getAbbyClient();
+      if (!abby) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+      const client = abby.getClient();
+      const { data } = await client.post({ 
+        url: '/v2/purchaseRegister', 
+        body: req.body 
+      });
+      res.json({ success: true, data });
+    } catch (err: any) {
+      handleAbbyError(err, res, "Create Purchase Register Entry");
+    }
+  });
+
+  // Nouveau : Gestion des produits
+  app.post("/api/abby/products", express.json(), async (req: any, res) => {
+    try {
+      const abby = getAbbyClient();
+      if (!abby) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+      const client = abby.getClient();
+      const { data } = await client.post({ 
+        url: '/v2/catalog/product', 
+        body: req.body 
+      });
+      res.json({ success: true, data });
+    } catch (err: any) {
+      handleAbbyError(err, res, "Create Product");
+    }
+  });
+
+  app.get("/api/abby/products", async (req: any, res) => {
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    try {
+      const abby = getAbbyClient(userId);
+      if (!abby) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+      const client = abby.getClient();
+      const { data } = await client.get({ url: '/v2/catalog/products' });
+      res.json(data);
+    } catch (err: any) {
+      handleAbbyError(err, res, "Fetch Products");
+    }
+  });
+
+  app.get("/api/abby/test-debug", async (req: any, res) => {
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    try {
+      const abby = getAbbyClient(userId);
+      if (!abby) return res.json({ error: "No key found in DB" });
+      
+      const client = abby.getClient();
+      const endpoints = [
+        '/invoices', '/invoice', '/billing/invoices', '/billing/invoice',
+        '/estimates', '/estimate', '/billing/estimates', '/billing/estimate',
+        '/purchase-orders', '/purchase-order', '/billing/purchase-orders', '/billing/purchase-order',
+        '/v2/invoices', '/v2/billing/invoices', '/v2/estimates', '/v2/purchase-orders',
+        '/v1/invoices', '/v1/estimates', '/v1/purchase-orders',
+        '/me', '/company/me'
+      ];
+
+      const results = await Promise.all(endpoints.map(async (url) => {
+        try {
+          const resp = await (client.get.length === 1 ? client.get({ url, query: { limit: 1 } }) : client.get(url, { params: { limit: 1 } }));
+          return { url, status: 200, count: Array.isArray(resp.data) ? resp.data.length : ((resp.data as any)?.docs?.length || 0) };
+        } catch (e: any) {
+          return { url, status: e.status || 404, error: e.message };
+        }
+      }));
+      
+      res.json({
+        userId,
+        results,
+        services: Object.getOwnPropertyNames(abby),
+        proto: Object.getOwnPropertyNames(Object.getPrototypeOf(abby))
+      });
+    } catch (err: any) {
+      res.json({ error: err.message });
+    }
+  });
+
+  app.get("/api/notifications/vapid-public-key", (req, res) => {
+    res.json({ publicKey: vapidKeys.publicKey });
+  });
+
+  app.post("/api/notifications/subscribe", express.json(), (req: any, res) => {
+    const subscription = req.body;
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    
+    try {
+      const stmt = db.prepare('INSERT OR REPLACE INTO subscriptions (subscription, user_id) VALUES (?, ?)');
+      stmt.run(JSON.stringify(subscription), userId);
+      res.status(201).json({});
+    } catch (error) {
+      res.status(500).json({ error: "Erreur lors de l'abonnement" });
+    }
+  });
+
+  app.post("/api/notifications/send-test", express.json(), async (req: any, res) => {
+    const userId = req.session.user?.homeAccountId || 'anonymous';
+    const subscriptions = db.prepare('SELECT subscription FROM subscriptions WHERE user_id = ?').all(userId);
+    
+    const notificationPayload = JSON.stringify({
+      title: 'Test de Notification',
+      body: 'Ceci est un test de notification de Larabstrait !',
+      url: '/'
+    });
+
+    const promises = (subscriptions as any[]).map(sub => {
+      console.log(`>>> [NOTIFICATIONS] Envoi à une souscription...`);
+      return webpush.sendNotification(JSON.parse(sub.subscription), notificationPayload)
+        .then(() => console.log(`>>> [NOTIFICATIONS] Succès de l'envoi.`))
+        .catch(err => {
+          console.error(`>>> [NOTIFICATIONS] Échec de l'envoi:`, err.statusCode, err.message);
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            console.log(`>>> [NOTIFICATIONS] Suppression d'un abonnement invalide.`);
+            db.prepare('DELETE FROM subscriptions WHERE subscription = ?').run(sub.subscription);
+          }
+          throw err; // On propage pour que le client sache que ça a échoué
+        });
+    });
+
+    try {
+      if (promises.length === 0) {
+        return res.status(400).json({ error: "Aucun appareil enregistré pour cet utilisateur. Essayez de vous ré-enregistrer." });
+      }
+      await Promise.all(promises);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Erreur lors de l'envoi : " + error.message });
+    }
+  });
+
+  // Gestion du mode de service (Vite pour le dev et le partage dans AI Studio)
+  const vite = await createViteServer({
+    server: { 
+      middlewareMode: true,
+      allowedHosts: true, // CRITIQUE : Autoriser tous les hôtes pour le lien de partage
+      hmr: false
+    },
+    appType: "spa",
+  });
+  
+  app.use(vite.middlewares);
+
+  // Fallback pour les routes SPA (doit être après les routes API)
+  app.get('*', async (req, res, next) => {
+    // Ne pas intercepter les appels API
+    if (req.path.startsWith('/api')) return next();
+    
+    try {
+      const indexPath = path.resolve(process.cwd(), 'index.html');
+      if (!fs.existsSync(indexPath)) {
+        return res.status(404).send("Fichier index.html introuvable sur le serveur.");
+      }
+      let html = fs.readFileSync(indexPath, 'utf-8');
+      html = await vite.transformIndexHtml(req.url, html);
+      res.status(200).set({ 'Content-Type': 'text/html' }).send(html);
+    } catch (e) {
+      console.error("Erreur critique rendu SPA:", e);
+      res.status(500).send("Erreur interne du serveur lors du chargement de l'application.");
+    }
+  });
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`>>> SERVEUR DÉMARRÉ SUR LE PORT ${PORT} <<<`);
+  });
+}
+
+startServer().catch(console.error);

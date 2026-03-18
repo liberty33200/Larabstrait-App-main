@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-lilas: #D1B3FF;
+  --color-dark-bg: #0a0a0a;
+  --color-card-bg: #141414;
+}
+
+@layer base {
+  body {
+    @apply bg-[#0a0a0a] text-gray-100 font-sans antialiased;
+  }
+}
+
+.glass-card {
+  @apply bg-[#141414] border border-white/5 rounded-2xl shadow-xl;
+}
+
+.btn-primary {
+  @apply bg-[#D1B3FF] text-black font-semibold px-6 py-3 rounded-xl hover:bg-purple-300 transition-all active:scale-95;
+}
