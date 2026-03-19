@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Calendar, 
+
+  Calendar,
   Users, 
   Download,
   Clock, 
@@ -15,6 +16,7 @@ import {
   Settings, 
   LogOut,
   Eye,
+  Mail,
   ChevronRight,
   ChevronDown,
   MoreVertical,
@@ -602,6 +604,9 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  
+  // NOUVEL ÉTAT POUR L'EMAIL
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -648,6 +653,32 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
     }
   };
 
+  // NOUVELLE FONCTION POUR ENVOYER L'EMAIL
+  // On remplace l'ancien état par celui-ci qui gère les 3 phases : idle, success, error
+  const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+
+  const handleSendPdf = async () => {
+    if (!appointment.clientEmail) {
+      alert("Ce client n'a pas d'adresse email renseignée.");
+      return;
+    }
+    setEmailStatus('sending');
+    try {
+      const res = await apiFetch(`/api/appointments/${appointment.id}/send-pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          clientEmail: appointment.clientEmail, 
+          clientName: appointment.client 
+        })
+      });
+      setEmailStatus(res.ok ? 'success' : 'error');
+    } catch (e) {
+      setEmailStatus('error');
+    }
+    setTimeout(() => setEmailStatus('idle'), 5000);
+  };
+
   const calculateDefaultDeposit = (total: number) => {
     const t = parseFloat(total.toString());
     if (t === 0) return 0;
@@ -669,13 +700,11 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
       const hasTotal = total > 0;
       const isFree = total === 0;
 
-      // Un dossier est "A contrôler" si ce n'est pas gratuit ET (pas d'acompte OU tarif <= 0)
       if (!isFree && (!hasDeposit || !hasTotal)) {
         baseStatus = "A contrôler";
       }
     }
 
-    // Final mapping based on Order Form
     if (baseStatus === "A contrôler") {
       if (orderForm === "Non édité") {
         return { label: "A contrôler + BDC", color: "bg-rose-500/10 text-rose-400 border border-rose-500/20" };
@@ -975,7 +1004,7 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
           </div>
         </div>
 
-        {/* Financial Info */}
+        {/* Financial Info & Actions */}
         <div className="space-y-8">
           <div className="glass-card p-8 border-t-4 border-lilas">
             <h3 className="text-xl font-bold mb-6 flex items-center space-x-2">
@@ -1092,46 +1121,35 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
             </div>
           </div>
 
-          <div className="glass-card p-6 border-t-4 border-emerald-500/50">
+          <div className="glass-card p-6 border-t-4 border-blue-500/50">
             <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4">
-              <Receipt size={12} />
-              <span>Facturation Abby</span>
+              <Mail size={12} />
+              <span>Communication Client</span>
             </label>
-            <div className="grid grid-cols-1 gap-2">
-              <button 
-                onClick={() => handleCreateAbbyDocument('Bon de commande')}
-                disabled={!!isCreating}
-                className="w-full py-2 bg-white/5 hover:bg-lilas hover:text-black border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {isCreating === 'Bon de commande' ? <RefreshCw size={14} className="animate-spin" /> : <FilePlus size={14} />}
-                <span>Générer Bon de Commande</span>
-              </button>
-              <button 
-                onClick={() => handleCreateAbbyDocument('Facture d\'acompte')}
-                disabled={!!isCreating}
-                className="w-full py-2 bg-white/5 hover:bg-lilas hover:text-black border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {isCreating === 'Facture d\'acompte' ? <RefreshCw size={14} className="animate-spin" /> : <FilePlus size={14} />}
-                <span>Générer Facture d'Acompte</span>
-              </button>
-              <button 
-                onClick={() => handleCreateAbbyDocument('Facture finale')}
-                disabled={!!isCreating}
-                className="w-full py-2 bg-white/5 hover:bg-lilas hover:text-black border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {isCreating === 'Facture finale' ? <RefreshCw size={14} className="animate-spin" /> : <FilePlus size={14} />}
-                <span>Générer Facture Finale</span>
-              </button>
-              <button 
-                onClick={() => handleCreateAbbyDocument('Recette')}
-                disabled={!!isCreating}
-                className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500 hover:text-black border border-emerald-500/20 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-50 text-emerald-400"
-              >
-                {isCreating === 'Recette' ? <RefreshCw size={14} className="animate-spin" /> : <BookOpen size={14} />}
-                <span>Enregistrer Recette (Livre)</span>
-              </button>
-            </div>
+            <button 
+              onClick={handleSendPdf}
+              disabled={emailStatus !== 'idle' || !appointment.clientEmail}
+              className={`w-full py-3 border rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-80
+                ${emailStatus === 'idle' ? 'bg-blue-500/10 hover:bg-blue-500 hover:text-white border-blue-500/20 text-blue-400' : ''}
+                ${emailStatus === 'sending' ? 'bg-blue-500/20 border-blue-500/30 text-blue-300 cursor-wait' : ''}
+                ${emailStatus === 'success' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : ''}
+                ${emailStatus === 'error' ? 'bg-rose-500/20 border-rose-500/50 text-rose-400' : ''}
+              `}
+            >
+              {emailStatus === 'idle' && <Mail size={18} />}
+              {emailStatus === 'sending' && <RefreshCw size={18} className="animate-spin" />}
+              {emailStatus === 'success' && <Check size={18} />}
+              {emailStatus === 'error' && <AlertCircle size={18} />}
+              <span>
+                {emailStatus === 'idle' && 'Envoi fiche de soins'}
+                {emailStatus === 'sending' && 'Envoi en cours...'}
+                {emailStatus === 'success' && 'Email envoyé !'}
+                {emailStatus === 'error' && 'Erreur d\'envoi'}
+              </span>
+            </button>
           </div>
+
+          
 
           <div className="glass-card p-6 bg-rose-500/5 border border-rose-500/10">
             <button 

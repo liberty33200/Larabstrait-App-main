@@ -13,8 +13,7 @@ import {
   Receipt,
   FileCheck,
   FilePlus,
-  RefreshCw,
-  Calendar // <-- Nouvel import
+  RefreshCw
 } from 'lucide-react';
 
 interface BillingViewProps {
@@ -28,7 +27,6 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all'); // all, invoices, quotes, pos
   const [hideCompleted, setHideCompleted] = useState(true);
-  const [timeFilter, setTimeFilter] = useState('month'); // NOUVEAU : Filtre temporel (month, last_month, year, all)
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -144,58 +142,6 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
     }
   };
 
-  // --- LOGIQUE DES STATISTIQUES ---
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-
-  const isDateInPeriod = (dateStr: string, period: string) => {
-    if (period === 'all') return true;
-    if (!dateStr || dateStr === 'N/A') return false;
-    
-    // Convertir "DD/MM/YYYY" en Date Javascript
-    const parts = dateStr.split('/');
-    if (parts.length !== 3) return false;
-    const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-    
-    if (period === 'month') {
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-    }
-    if (period === 'last_month') {
-      const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-      const yearOfLastMonth = currentMonth === 0 ? currentYear - 1 : currentYear;
-      return d.getMonth() === lastMonth && d.getFullYear() === yearOfLastMonth;
-    }
-    if (period === 'year') {
-      return d.getFullYear() === currentYear;
-    }
-    return true;
-  };
-
-  const statsInvoices = invoices.filter(inv => isDateInPeriod(inv.date, timeFilter));
-  
-  let pendingAmount = 0;
-  let pendingCount = 0;
-  let paidAmount = 0;
-  let poAmount = 0;
-
-  statsInvoices.forEach(inv => {
-    // En attente (Factures envoyées/finalisées mais non payées)
-    if (inv.type === 'Facture' && inv.status === 'sent') {
-      pendingAmount += inv.amount;
-      pendingCount++;
-    }
-    // Encaissé (Factures payées)
-    if (inv.type === 'Facture' && inv.status === 'paid') {
-      paidAmount += inv.amount;
-    }
-    // Bons de commande générés
-    if (inv.type === 'Bon de commande') {
-      poAmount += inv.amount;
-    }
-  });
-
-  // --- LOGIQUE DU TABLEAU ---
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           inv.id.toLowerCase().includes(searchQuery.toLowerCase());
@@ -234,43 +180,33 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
         </div>
       </div>
 
-      {/* Zone des Cartes de Statistiques avec Filtre Temporel */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold">Vue d'ensemble</h3>
-          <div className="flex items-center space-x-2 bg-white/5 rounded-xl p-1 border border-white/10">
-            <Calendar size={16} className="text-gray-400 ml-3" />
-            <select 
-              value={timeFilter} 
-              onChange={(e) => setTimeFilter(e.target.value)}
-              className="bg-transparent border-none text-sm font-medium text-white focus:outline-none focus:ring-0 py-1 pr-4 pl-2 cursor-pointer appearance-none"
-            >
-              <option value="month" className="bg-[#1a1a1a]">Ce mois</option>
-              <option value="last_month" className="bg-[#1a1a1a]">Le mois dernier</option>
-              <option value="year" className="bg-[#1a1a1a]">Cette année</option>
-              <option value="all" className="bg-[#1a1a1a]">Toujours</option>
-            </select>
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-400">En attente</span>
+            <Clock size={20} className="text-amber-400" />
           </div>
+          <div className="text-2xl font-bold">1 560,00 €</div>
+          <div className="text-xs text-amber-400/80">3 documents à relancer</div>
+        </div>
+        
+        <div className="glass-card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-400">Payé (ce mois)</span>
+            <CheckCircle2 size={20} className="text-emerald-400" />
+          </div>
+          <div className="text-2xl font-bold">3 240,00 €</div>
+          <div className="text-xs text-emerald-400/80">+12% par rapport au mois dernier</div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="glass-card p-6 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-400">En attente (Factures)</span>
-              <Clock size={20} className="text-amber-400" />
-            </div>
-            <div className="text-2xl font-bold">{pendingAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</div>
-            <div className="text-xs text-amber-400/80">{pendingCount} facture(s) en attente</div>
+        <div className="glass-card p-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-400">Bons de commande</span>
+            <FileText size={20} className="text-lilas" />
           </div>
-          
-          <div className="glass-card p-6 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-400">Encaissé (Factures)</span>
-              <CheckCircle2 size={20} className="text-emerald-400" />
-            </div>
-            <div className="text-2xl font-bold">{paidAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</div>
-            <div className="text-xs text-emerald-400/80">Sur la période sélectionnée</div>
-          </div>
+          <div className="text-2xl font-bold">4 800,00 €</div>
+          <div className="text-xs text-lilas/80">Volume total en cours</div>
         </div>
       </div>
 
@@ -283,7 +219,7 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
             placeholder="Rechercher une facture ou un client..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-transparent border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:outline-none focus:border-lilas/50 transition-all"
+            className="w-full bg-dark-bg border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:outline-none focus:border-lilas/50 transition-all"
           />
         </div>
         
