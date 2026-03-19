@@ -444,7 +444,7 @@ const SettingsView = ({
         <BookingBusinessFinder apiFetch={apiFetch} />
       </CollapsibleSection>
 
-      <CollapsibleSection title="Intégration Abby" icon={Receipt} defaultOpen={false}>
+      {/*<CollapsibleSection title="Intégration Abby" icon={Receipt} defaultOpen={false}>
         <div className="p-8 space-y-6">
           <div className="flex items-center justify-between">
             <div className="space-y-1">
@@ -483,7 +483,7 @@ const SettingsView = ({
             </p>
           </div>
         </div>
-      </CollapsibleSection>
+      </CollapsibleSection>*/}
 
       <CollapsibleSection title="Configuration Comptable (Loyer & URSSAF)" icon={Wallet} defaultOpen={false}>
         <div className="space-y-6">
@@ -604,9 +604,6 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
-  
-  // NOUVEL ÉTAT POUR L'EMAIL
-  const [sendingEmail, setSendingEmail] = useState(false);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -1878,8 +1875,15 @@ const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, o
                     <div>
                       <p className="text-sm font-bold text-red-400">{off.title}</p>
                       <p className="text-[10px] text-red-400/60 font-medium">
-                        {new Date(off.start).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} - {new Date(off.end).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                      </p>
+  {off.start && !isNaN(new Date(off.start).getTime()) ? (
+    <>
+      {new Date(off.start).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+      {off.end && !isNaN(new Date(off.end).getTime()) && ` - ${new Date(off.end).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`}
+    </>
+  ) : (
+    "Journée entière"
+  )}
+</p>
                     </div>
                   </div>
                 ))}

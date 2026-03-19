@@ -1,4 +1,5 @@
 import express from "express";
+import cron from 'node-cron';
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -928,6 +929,36 @@ app.get("/api/abby/documents", async (req: any, res) => {
       res.status(500).send("Erreur interne.");
     }
   });
+
+// À la fin de server.ts, juste avant startServer().catch(console.error);
+cron.schedule('* * * * *', async () => {
+  try {
+    const now = new Date();
+    // On calcule une fenêtre de temps pour le filtre (ex: entre maintenant et +20 min)
+    const futureLimit = new Date(now.getTime() + 20 * 60000).toISOString();
+    const nowISO = now.toISOString();
+
+    // On utilise le paramètre 'filter' pour ne récupérer que les RDV proches
+    // On ne demande que les colonnes nécessaires avec 'select'
+    const filter = `cr7e0_daterdv ge ${nowISO} and cr7e0_daterdv le ${futureLimit}`;
+    const select = "cr7e0_nomclient,cr7e0_daterdv";
+
+    const appointments = await fetchDataverse("cr7e0_gestiontatouages", select, filter);
+    
+    if (!Array.isArray(appointments)) return;
+
+    for (const appt of appointments) {
+      const startTime = new Date(appt.cr7e0_daterdv);
+      const diffInMinutes = Math.round((startTime.getTime() - now.getTime()) / 60000);
+
+      if (diffInMinutes === 15) {
+        // ... (ton code d'envoi de notification reste le même)
+      }
+    }
+  } catch (error: any) {
+    console.error("Erreur Cron optimisé:", error.message);
+  }
+});
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`>>> SERVEUR DÉMARRÉ SUR LE PORT ${PORT} <<<`);
