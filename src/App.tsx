@@ -1944,7 +1944,7 @@ const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, o
             className="w-full mt-8 py-4 bg-white/5 text-gray-300 hover:bg-white/10 rounded-2xl text-sm font-bold transition-all flex items-center justify-center space-x-2 border border-white/5"
           >
             <Plane size={20} />
-            <span>Poser un congés</span>
+            <span>Poser un congé</span>
           </button>
 
           <button 
@@ -3238,15 +3238,19 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
       }
 
       const promises = days.map(date => {
+        // On force l'heure à midi pour éviter les décalages de fuseau horaire
+        const safeDate = new Date(date);
+        safeDate.setHours(12, 0, 0, 0);
+
         const payload = {
           cr7e0_nomclient: `CONGÉ: ${formData.reason}`,
           cr7e0_email: 'conge@larabstrait.fr',
-          cr7e0_daterdv: date.toISOString(),
+          cr7e0_daterdv: safeDate.toISOString(), // Utilise la date "sécurisée"
           cr7e0_tariftattoo: 0,
-          cr7e0_acompte: "129690002", // Dispensé
+          cr7e0_acompte: "129690002",
           cr7e0_montantacompte: 0,
-          cr7e0_typederdv: "129690005", // Cadeau (utilisé pour les congés par défaut)
-          cr7e0_boncommande: "129690002" // Dispensé
+          cr7e0_typederdv: "129690005",
+          cr7e0_boncommande: "129690002"
         };
         return apiFetch('/api/appointments', {
           method: 'POST',
@@ -3590,27 +3594,32 @@ export default function App() {
                                orderFormIdToLabel[String(appt.cr7e0_boncommande)] || 
                                'Non édité';
 
-        return {
-          id: appt.cr7e0_gestiontatouageid || appt.id,
-          client: clientName,
-          clientEmail: appt.cr7e0_email || '',
-          date: dateObj ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'À définir',
-          time: dateObj ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '14:00',
-          rawDate,
-          style: tattooType,
-          total: appt.cr7e0_tariftattoo || 0,
-          deposit: depositLabel,
-          hasDeposit,
-          depositAmount: appt.cr7e0_montantacompte || 0,
-          orderForm: orderFormLabel,
-          location: appt.cr7e0_emplacement || '',
-          projectRecap: appt.cr7e0_recapitulatifprojet || '',
-          size: appt.cr7e0_taille || '',
-          status: hasDeposit ? 'Payé' : 'Confirmé',
-          method: 'N/A',
-          price: `${appt.cr7e0_tariftattoo || 0} €`,
-          isTimeOff
-        };
+        // On vérifie si la date est réellement exploitable
+const isValid = dateObj instanceof Date && !isNaN(dateObj.getTime());
+
+return {
+  id: appt.cr7e0_gestiontatouageid || appt.id,
+  client: clientName,
+  clientEmail: appt.cr7e0_email || '',
+  // Si la date est valide on l'affiche, sinon on met "À définir"
+  date: isValid ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date à définir',
+  // Si c'est un congé, on n'affiche pas l'heure (souvent 00:00 ou invalide)
+  time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : (isTimeOff ? 'Journée' : ''),
+  rawDate,
+  style: tattooType,
+  total: appt.cr7e0_tariftattoo || 0,
+  deposit: depositLabel,
+  hasDeposit,
+  depositAmount: appt.cr7e0_montantacompte || 0,
+  orderForm: orderFormLabel,
+  location: appt.cr7e0_emplacement || '',
+  projectRecap: appt.cr7e0_recapitulatifprojet || '',
+  size: appt.cr7e0_taille || '',
+  status: hasDeposit ? 'Payé' : 'Confirmé',
+  method: 'N/A',
+  price: `${appt.cr7e0_tariftattoo || 0} €`,
+  isTimeOff
+};
       });
 
       console.log("Rendez-vous mappés:", mappedAppts);

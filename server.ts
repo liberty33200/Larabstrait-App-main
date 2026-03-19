@@ -301,7 +301,7 @@ async function startServer() {
           body: {
             contentType: "HTML",
             content: `
-              <p>Bonjour ${clientName},</p>
+              <p>Hello !</p>
               <p>Suite à notre séance voici, ci-joint, la feuille de soin comme convenu avec toutes les consignes à respecter durant la période de cicatrisation.</p>
               <p>Je reste disponible si besoin.</p>
               <p>À bientôt et bonne cicatrisation💫</p>
