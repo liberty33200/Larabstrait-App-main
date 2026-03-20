@@ -3316,7 +3316,6 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
 const BugReportView = ({ apiFetch }: any) => {
   const [content, setContent] = useState('');
   const [reports, setReports] = useState<any[]>([]);
-  // CORRECTION DU BUG TYPESCRIPT : Le statut d'erreur est maintenant autorisé
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
 
   const fetchReports = async () => {
@@ -3364,6 +3363,20 @@ const BugReportView = ({ apiFetch }: any) => {
     } catch (e) {}
   };
 
+  // NOUVELLE FONCTION : Purger les tickets terminés
+  const purgeCompleted = async () => {
+    if (!window.confirm("Supprimer définitivement tous les tickets cochés ?")) return;
+    try {
+      const res = await apiFetch('/api/reports/completed', { method: 'DELETE' });
+      if (res.ok) fetchReports();
+    } catch (e) {
+      console.error("Erreur lors de la purge", e);
+    }
+  };
+
+  // Vérifier s'il y a au moins un ticket terminé pour afficher le bouton
+  const hasCompletedReports = reports.some(r => r.completed === 1);
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
       <div>
@@ -3380,7 +3393,24 @@ const BugReportView = ({ apiFetch }: any) => {
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-xl font-bold flex items-center space-x-2 text-lilas"><CheckCircle2 size={20} /><span>Feuille de route</span></h3>
+        {/* En-tête de la liste avec le nouveau bouton Purger */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-bold flex items-center space-x-2 text-lilas">
+            <CheckCircle2 size={20} />
+            <span>Feuille de route</span>
+          </h3>
+          
+          {hasCompletedReports && (
+            <button 
+              onClick={purgeCompleted}
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-rose-500/20 text-rose-400 hover:bg-rose-500/10 transition-all text-xs font-bold"
+            >
+              <Trash2 size={14} />
+              <span>Purger les terminés</span>
+            </button>
+          )}
+        </div>
+
         <div className="grid gap-3">
           {reports.map((report: any) => (
             <div key={report.id} className={`glass-card p-4 flex items-start space-x-4 transition-all ${report.completed ? 'opacity-40' : ''}`}>

@@ -34,11 +34,7 @@ db.exec(`
     abby_api_key TEXT
   );
 
-  -- ON SUPPRIME L'ANCIENNE TABLE POUR RÉPARER LE BUG
-  DROP TABLE IF EXISTS reports;
-  
-  -- ON LA RECRÉÉ AVEC LA BONNE COLONNE "COMPLETED"
-  CREATE TABLE reports (
+  CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
     content TEXT,
@@ -906,22 +902,43 @@ app.get("/api/abby/documents", async (req: any, res) => {
     }
   });
   // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
+// --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
 app.get("/api/reports", (req: any, res) => {
   try {
     const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
     res.json(reports);
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ error: "Erreur lecture" });
   }
 });
 
 app.post("/api/reports", express.json(), (req: any, res) => {
-  const userId = req.session?.user?.homeAccountId || "anonymous";
+  const userId = getUserId(req);
   const { content } = req.body;
+
+  if (!content || content.trim().length < 5) {
+    return res.status(400).json({ error: "Le message est trop court." });
+  }
+
   try {
     db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
+
+    // Notification Push
+    const subscriptions = db.prepare("SELECT subscription FROM subscriptions").all();
+    const notificationPayload = JSON.stringify({
+      title: "Nouveau Ticket / Bug 🐞",
+      body: content.length > 50 ? content.substring(0, 50) + "..." : content,
+      url: "/" 
+    });
+
+    subscriptions.forEach((sub: any) => {
+      try {
+        webpush.sendNotification(JSON.parse(sub.subscription), notificationPayload).catch(() => {});
+      } catch (e) {}
+    });
+
     res.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ error: "Erreur écriture" });
   }
 });
@@ -932,10 +949,21 @@ app.patch("/api/reports/:id", express.json(), (req: any, res) => {
   try {
     db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
     res.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ error: "Erreur MAJ" });
   }
 });
+
+app.delete("/api/reports/completed", (req: any, res) => {
+  try {
+    db.prepare("DELETE FROM reports WHERE completed = 1").run();
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: "Erreur purge" });
+  }
+});
+
+  // --- GESTION DES ERREURS 404 DE L'API ---
 
   // --- GESTION DES ERREURS 404 DE L'API ---
   app.all("/api/*", (req, res) => {
