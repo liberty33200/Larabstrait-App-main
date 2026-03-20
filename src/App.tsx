@@ -3218,117 +3218,94 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
-  if (!content.trim() || status === 'sending') return;
-  
-  console.log("[DIAG] Tentative d'envoi du message...");
-  setStatus('sending');
-  
-  try {
-    const res = await apiFetch('/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: content.trim() })
-    });
-
-    console.log("[DIAG] Réponse du serveur - Statut :", res.status);
-
-    if (res.ok) {
-      console.log("[DIAG] Succès !");
-      setStatus('success');
-      setContent('');
-      await fetchReports();
-      setTimeout(() => setStatus('idle'), 2000);
-    } else {
-      console.error("[DIAG] Le serveur a répondu avec une erreur.");
-      setStatus('error');
-      setTimeout(() => setStatus('idle'), 3000);
+    if (!formData.startDate || !formData.endDate || !formData.reason) {
+      setError("Veuillez remplir tous les champs");
+      return;
     }
-  } catch (e) {
-    console.error("[DIAG] Erreur réseau ou plantage :", e);
-    setStatus('error');
-    setTimeout(() => setStatus('idle'), 3000);
-  }
-};
+
+    setSaving(true);
+    setError(null);
+    try {
+      const start = new Date(formData.startDate);
+      const end = new Date(formData.endDate);
+      
+      if (end < start) {
+        throw new Error("La date de fin doit être après la date de début");
+      }
+
+      const days = [];
+      let current = new Date(start);
+      while (current <= end) {
+        days.push(new Date(current));
+        current.setDate(current.getDate() + 1);
+      }
+
+      const promises = days.map(date => {
+        const safeDate = new Date(date);
+        safeDate.setHours(12, 0, 0, 0);
+
+        const payload = {
+          cr7e0_nomclient: `CONGÉ: ${formData.reason}`,
+          cr7e0_email: 'conge@larabstrait.fr',
+          cr7e0_daterdv: safeDate.toISOString(),
+          cr7e0_tariftattoo: 0,
+          cr7e0_acompte: "129690002",
+          cr7e0_montantacompte: 0,
+          cr7e0_typederdv: "129690005",
+          cr7e0_boncommande: "129690002"
+        };
+        return apiFetch('/api/appointments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      });
+
+      const results = await Promise.all(promises);
+      const failed = results.find(r => !r.ok);
+      if (failed) {
+        const data = await failed.json();
+        throw new Error(data.error || "Erreur création d'un jour");
+      }
+
+      onCreated();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, x: 20 }} 
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -20 }}
-      className="space-y-8"
-    >
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <button onClick={onBack} className="p-2 hover:bg-white/5 rounded-xl transition-all">
-            <ArrowLeft size={24} />
-          </button>
+          <button onClick={onBack} className="p-2 hover:bg-white/5 rounded-xl transition-all"><ArrowLeft size={24} /></button>
           <h2 className="text-2xl font-bold">Poser un congés</h2>
         </div>
-        <button 
-          onClick={handleSubmit}
-          disabled={saving}
-          className="btn-primary flex items-center space-x-2"
-        >
+        <button onClick={handleSubmit} disabled={saving} className="btn-primary flex items-center space-x-2">
           {saving ? <RefreshCw size={20} className="animate-spin" /> : <Save size={20} />}
           <span>{saving ? "Enregistrement..." : "Enregistrer"}</span>
         </button>
       </div>
-
-      {error && (
-        <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 flex items-center space-x-3">
-          <AlertCircle size={20} />
-          <span>{error}</span>
-        </div>
-      )}
-
+      {error && <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 flex items-center space-x-3"><AlertCircle size={20} /><span>{error}</span></div>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="glass-card p-8 space-y-6">
           <div className="space-y-4">
             <div className="space-y-1">
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Motif du congé</label>
-              <input 
-                type="text" 
-                placeholder="Ex: Vacances, Salon, Perso..."
-                value={formData.reason}
-                onChange={(e) => setFormData({...formData, reason: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
-              />
+              <input type="text" placeholder="Ex: Vacances..." value={formData.reason} onChange={(e) => setFormData({...formData, reason: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"/>
             </div>
-
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date de début</label>
-                <input 
-                  type="date" 
-                  value={formData.startDate}
-                  onChange={(e) => setFormData({...formData, startDate: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date de fin</label>
-                <input 
-                  type="date" 
-                  value={formData.endDate}
-                  onChange={(e) => setFormData({...formData, endDate: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
-                />
-              </div>
+              <div className="space-y-1"><label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date de début</label><input type="date" value={formData.startDate} onChange={(e) => setFormData({...formData, startDate: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50"/></div>
+              <div className="space-y-1"><label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date de fin</label><input type="date" value={formData.endDate} onChange={(e) => setFormData({...formData, endDate: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50"/></div>
             </div>
           </div>
         </div>
-
         <div className="hidden md:block">
           <div className="glass-card p-8 h-full flex flex-col items-center justify-center text-center space-y-4 opacity-40">
-            <div className="w-20 h-20 rounded-3xl bg-lilas/10 flex items-center justify-center text-lilas">
-              <Plane size={40} />
-            </div>
-            <div>
-              <h3 className="font-bold text-lg">Bloquer l'agenda</h3>
-              <p className="text-sm text-gray-400 max-w-[200px] mx-auto">
-                Les jours sélectionnés apparaîtront en rouge dans votre planning pour indiquer votre indisponibilité.
-              </p>
-            </div>
+            <div className="w-20 h-20 rounded-3xl bg-lilas/10 flex items-center justify-center text-lilas"><Plane size={40} /></div>
+            <div><h3 className="font-bold text-lg">Bloquer l'agenda</h3></div>
           </div>
         </div>
       </div>
@@ -3339,7 +3316,8 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
 const BugReportView = ({ apiFetch }: any) => {
   const [content, setContent] = useState('');
   const [reports, setReports] = useState<any[]>([]);
-  const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+  // CORRECTION DU BUG TYPESCRIPT : Le statut d'erreur est maintenant autorisé
+  const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
 
   const fetchReports = async () => {
     try {
@@ -3351,44 +3329,39 @@ const BugReportView = ({ apiFetch }: any) => {
   useEffect(() => { fetchReports(); }, []);
 
   const handleSubmit = async () => {
-  if (!content.trim()) return;
-  
-  console.log("[DIAGNOSTIC] Tentative d'envoi du rapport:", content);
-  setStatus('sending');
-  
-  try {
-    const res = await apiFetch('/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: content.trim() })
-    });
+    if (!content.trim() || status === 'sending') return;
+    setStatus('sending');
+    try {
+      const res = await apiFetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: content.trim() })
+      });
 
-    console.log("[DIAGNOSTIC] Statut de la réponse serveur:", res.status);
-
-    if (res.ok) {
-      console.log("[DIAGNOSTIC] Envoi réussi !");
-      setStatus('success');
-      setContent('');
-      fetchReports();
-      setTimeout(() => setStatus('idle'), 2000);
-    } else {
-      const errorData = await res.json();
-      console.error("[DIAGNOSTIC] Erreur serveur reçue:", errorData);
+      if (res.ok) {
+        setStatus('success');
+        setContent('');
+        fetchReports();
+        setTimeout(() => setStatus('idle'), 2000);
+      } else {
+        setStatus('error');
+        setTimeout(() => setStatus('idle'), 3000);
+      }
+    } catch (e) {
       setStatus('error');
+      setTimeout(() => setStatus('idle'), 3000);
     }
-  } catch (e) {
-    console.error("[DIAGNOSTIC] Erreur réseau lors de l'appel API:", e);
-    setStatus('error');
-  }
-};
+  };
 
   const toggleReport = async (id: number, currentStatus: number) => {
-    const res = await apiFetch(`/api/reports/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ completed: currentStatus === 0 ? 1 : 0 })
-    });
-    if (res.ok) fetchReports();
+    try {
+      const res = await apiFetch(`/api/reports/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: currentStatus === 0 ? 1 : 0 })
+      });
+      if (res.ok) fetchReports();
+    } catch (e) {}
   };
 
   return (
@@ -3399,35 +3372,28 @@ const BugReportView = ({ apiFetch }: any) => {
       </div>
 
       <div className="glass-card p-6 space-y-4">
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Décrivez votre demande..."
-          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 min-h-[100px]"
-        />
-        <button onClick={handleSubmit} disabled={status === 'sending' || !content.trim()} className="btn-primary px-6 py-2 flex items-center space-x-2 disabled:opacity-50">
-          {status === 'sending' ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
-          <span>Envoyer mon retour</span>
+        <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Décrivez votre demande..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 min-h-[100px]" />
+        <button onClick={handleSubmit} disabled={status === 'sending' || !content.trim()} className={`px-6 py-2 rounded-xl font-bold flex items-center space-x-2 disabled:opacity-50 ${status === 'error' ? 'bg-rose-500 text-white' : 'btn-primary'}`}>
+          {status === 'sending' ? <RefreshCw className="animate-spin" size={18} /> : status === 'error' ? <AlertCircle size={18} /> : <Save size={18} />}
+          <span>{status === 'error' ? 'Erreur (Réessayer)' : status === 'success' ? 'Envoyé !' : 'Envoyer mon retour'}</span>
         </button>
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-xl font-bold flex items-center space-x-2 text-lilas">
-          <CheckCircle2 size={20} />
-          <span>Feuille de route</span>
-        </h3>
+        <h3 className="text-xl font-bold flex items-center space-x-2 text-lilas"><CheckCircle2 size={20} /><span>Feuille de route</span></h3>
         <div className="grid gap-3">
           {reports.map((report: any) => (
             <div key={report.id} className={`glass-card p-4 flex items-start space-x-4 transition-all ${report.completed ? 'opacity-40' : ''}`}>
-              <button onClick={() => toggleReport(report.id, report.completed)} className={`mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center ${report.completed ? 'bg-emerald-500 border-emerald-500 text-black' : 'border-white/10'}`}>
+              <button onClick={() => toggleReport(report.id, report.completed)} className={`mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center ${report.completed ? 'bg-emerald-500 border-emerald-500 text-black' : 'border-white/10 hover:border-lilas'}`}>
                 {report.completed ? <Check size={16} /> : null}
               </button>
               <div className="flex-1">
                 <p className={`text-sm ${report.completed ? 'line-through text-gray-500' : 'text-gray-200'}`}>{report.content}</p>
-                <p className="text-[10px] text-gray-500 mt-2">Le {new Date(report.timestamp).toLocaleDateString('fr-FR')}</p>
+                <p className="text-[10px] text-gray-500 mt-2 font-mono">Posté le {new Date(report.timestamp).toLocaleDateString('fr-FR')}</p>
               </div>
             </div>
           ))}
+          {reports.length === 0 && <p className="text-center text-gray-500 italic p-6 border border-dashed border-white/10 rounded-2xl">Aucun retour enregistré.</p>}
         </div>
       </div>
     </motion.div>
