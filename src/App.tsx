@@ -3218,66 +3218,37 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
-    if (!formData.startDate || !formData.endDate || !formData.reason) {
-      setError("Veuillez remplir tous les champs");
-      return;
+  if (!content.trim() || status === 'sending') return;
+  
+  console.log("[DIAG] Tentative d'envoi du message...");
+  setStatus('sending');
+  
+  try {
+    const res = await apiFetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content.trim() })
+    });
+
+    console.log("[DIAG] Réponse du serveur - Statut :", res.status);
+
+    if (res.ok) {
+      console.log("[DIAG] Succès !");
+      setStatus('success');
+      setContent('');
+      await fetchReports();
+      setTimeout(() => setStatus('idle'), 2000);
+    } else {
+      console.error("[DIAG] Le serveur a répondu avec une erreur.");
+      setStatus('error');
+      setTimeout(() => setStatus('idle'), 3000);
     }
-
-    setSaving(true);
-    setError(null);
-    try {
-      const start = new Date(formData.startDate);
-      const end = new Date(formData.endDate);
-      
-      if (end < start) {
-        throw new Error("La date de fin doit être après la date de début");
-      }
-
-      // On crée un enregistrement par jour pour que ça apparaisse bien dans le calendrier
-      const days = [];
-      let current = new Date(start);
-      while (current <= end) {
-        days.push(new Date(current));
-        current.setDate(current.getDate() + 1);
-      }
-
-      const promises = days.map(date => {
-        // On force l'heure à midi pour éviter les décalages de fuseau horaire
-        const safeDate = new Date(date);
-        safeDate.setHours(12, 0, 0, 0);
-
-        const payload = {
-          cr7e0_nomclient: `CONGÉ: ${formData.reason}`,
-          cr7e0_email: 'conge@larabstrait.fr',
-          cr7e0_daterdv: safeDate.toISOString(), // Utilise la date "sécurisée"
-          cr7e0_tariftattoo: 0,
-          cr7e0_acompte: "129690002",
-          cr7e0_montantacompte: 0,
-          cr7e0_typederdv: "129690005",
-          cr7e0_boncommande: "129690002"
-        };
-        return apiFetch('/api/appointments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      });
-
-      const results = await Promise.all(promises);
-      const failed = results.find(r => !r.ok);
-      if (failed) {
-        const data = await failed.json();
-        throw new Error(data.error || "Erreur lors de la création d'un des jours de congé");
-      }
-
-      onCreated();
-    } catch (err: any) {
-      console.error("Erreur création congés:", err);
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+  } catch (e) {
+    console.error("[DIAG] Erreur réseau ou plantage :", e);
+    setStatus('error');
+    setTimeout(() => setStatus('idle'), 3000);
+  }
+};
 
   return (
     <motion.div 
@@ -3359,6 +3330,104 @@ const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+const BugReportView = ({ apiFetch }: any) => {
+  const [content, setContent] = useState('');
+  const [reports, setReports] = useState<any[]>([]);
+  const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+
+  const fetchReports = async () => {
+    try {
+      const res = await apiFetch('/api/reports');
+      if (res.ok) setReports(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { fetchReports(); }, []);
+
+  const handleSubmit = async () => {
+  if (!content.trim()) return;
+  
+  console.log("[DIAGNOSTIC] Tentative d'envoi du rapport:", content);
+  setStatus('sending');
+  
+  try {
+    const res = await apiFetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content.trim() })
+    });
+
+    console.log("[DIAGNOSTIC] Statut de la réponse serveur:", res.status);
+
+    if (res.ok) {
+      console.log("[DIAGNOSTIC] Envoi réussi !");
+      setStatus('success');
+      setContent('');
+      fetchReports();
+      setTimeout(() => setStatus('idle'), 2000);
+    } else {
+      const errorData = await res.json();
+      console.error("[DIAGNOSTIC] Erreur serveur reçue:", errorData);
+      setStatus('error');
+    }
+  } catch (e) {
+    console.error("[DIAGNOSTIC] Erreur réseau lors de l'appel API:", e);
+    setStatus('error');
+  }
+};
+
+  const toggleReport = async (id: number, currentStatus: number) => {
+    const res = await apiFetch(`/api/reports/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: currentStatus === 0 ? 1 : 0 })
+    });
+    if (res.ok) fetchReports();
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <div>
+        <h2 className="text-3xl font-bold">Améliorations / bugs</h2>
+        <p className="text-gray-400">Suivi des demandes et corrections.</p>
+      </div>
+
+      <div className="glass-card p-6 space-y-4">
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="Décrivez votre demande..."
+          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 min-h-[100px]"
+        />
+        <button onClick={handleSubmit} disabled={status === 'sending' || !content.trim()} className="btn-primary px-6 py-2 flex items-center space-x-2 disabled:opacity-50">
+          {status === 'sending' ? <RefreshCw className="animate-spin" size={18} /> : <Save size={18} />}
+          <span>Envoyer mon retour</span>
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold flex items-center space-x-2 text-lilas">
+          <CheckCircle2 size={20} />
+          <span>Feuille de route</span>
+        </h3>
+        <div className="grid gap-3">
+          {reports.map((report: any) => (
+            <div key={report.id} className={`glass-card p-4 flex items-start space-x-4 transition-all ${report.completed ? 'opacity-40' : ''}`}>
+              <button onClick={() => toggleReport(report.id, report.completed)} className={`mt-1 w-6 h-6 rounded-lg border-2 flex items-center justify-center ${report.completed ? 'bg-emerald-500 border-emerald-500 text-black' : 'border-white/10'}`}>
+                {report.completed ? <Check size={16} /> : null}
+              </button>
+              <div className="flex-1">
+                <p className={`text-sm ${report.completed ? 'line-through text-gray-500' : 'text-gray-200'}`}>{report.content}</p>
+                <p className="text-[10px] text-gray-500 mt-2">Le {new Date(report.timestamp).toLocaleDateString('fr-FR')}</p>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </motion.div>
@@ -3876,6 +3945,12 @@ return {
             active={activeTab === 'settings'} 
             onClick={() => navigateTo('settings')}
           />
+          <SidebarItem 
+            icon={AlertTriangle} // N'oublie pas d'importer AlertTriangle en haut s'il manque
+            label="Bug / Améliorations" 
+            active={activeTab === 'reports'} 
+            onClick={() => navigateTo('reports')}
+          />
         </nav>
 
         <div className="pt-6 border-t border-white/5 space-y-2">
@@ -3992,6 +4067,8 @@ return {
               onUnsubscribe={unsubscribeFromPush}
               onTestNotification={sendTestNotification}
             />
+            ) : activeTab === 'reports' ? (
+              <BugReportView apiFetch={apiFetch} />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
               Vue en cours de développement...

@@ -28,10 +28,30 @@ db.exec(`
     subscription TEXT UNIQUE,
     user_id TEXT
   );
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    content TEXT,
+    completed INTEGER DEFAULT 0, -- 0 = à faire, 1 = traité
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    content TEXT,
+    completed INTEGER DEFAULT 0,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 
   CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT PRIMARY KEY,
     abby_api_key TEXT
+  );
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    content TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
@@ -893,6 +913,126 @@ app.get("/api/abby/documents", async (req: any, res) => {
       res.status(500).json({ error: error.message });
     }
   });
+  app.post("/api/reports", express.json(), (req: any, res) => {
+  const userId = getUserId(req);
+  const { content } = req.body;
+
+  if (!content || content.trim().length < 5) {
+    return res.status(400).json({ error: "Le message est trop court." });
+  }
+
+  try {
+    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)")
+      .run(userId, content);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de l'enregistrement du rapport." });
+  }
+});
+// --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
+app.get("/api/reports", (req: any, res) => {
+  try {
+    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de la récupération des rapports." });
+  }
+});
+
+app.post("/api/reports", express.json(), (req: any, res) => {
+  const userId = getUserId(req);
+  const { content } = req.body;
+  try {
+    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de l'envoi." });
+  }
+});
+
+app.patch("/api/reports/:id", express.json(), (req: any, res) => {
+  const { id } = req.params;
+  const { completed } = req.body;
+  try {
+    db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de la mise à jour." });
+  }
+});
+// --- DIAGNOSTIC & SYSTÈME DE TICKETS ---
+app.post("/api/reports", express.json(), (req: any, res) => {
+  const userId = req.session?.user?.homeAccountId || "anonymous";
+  const { content } = req.body;
+
+  // LOG DE DIAGNOSTIC : Apparaîtra dans tes logs Portainer
+  console.log(`[DIAGNOSTIC] Réception d'un rapport de ${userId}:`, content);
+
+  try {
+    // On insère dans la base SQLite
+    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
+    console.log("[DIAGNOSTIC] Rapport enregistré avec succès dans SQLite.");
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("[DIAGNOSTIC] Erreur lors de l'insertion SQLite:", error.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Route pour lister les rapports
+app.get("/api/reports", (req, res) => {
+  console.log("[DIAGNOSTIC] Lecture de la liste des rapports...");
+  try {
+    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
+    res.json(reports);
+  } catch (error: any) {
+    console.error("[DIAGNOSTIC] Erreur lecture SQLite:", error.message);
+    res.status(500).json({ error: "Erreur lecture" });
+  }
+});
+// --- DIAGNOSTIC : SYSTÈME DE TICKETS ---
+app.post("/api/reports", express.json(), (req: any, res) => {
+  const userId = req.session?.user?.homeAccountId || "anonymous";
+  const { content } = req.body;
+
+  // Ce log apparaîtra dans Portainer pour confirmer la réception
+  console.log(`[TICKET] Requête reçue de ${userId}. Contenu : ${content?.substring(0, 20)}...`);
+
+  try {
+    const stmt = db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)");
+    stmt.run(userId, content);
+    console.log("[TICKET] Succès : Rapport enregistré en base.");
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("[TICKET] Erreur SQL :", error.message);
+    res.status(500).json({ error: "Erreur lors de l'enregistrement" });
+  }
+});
+
+app.get("/api/reports", (req, res) => {
+  console.log("[TICKET] Lecture de la liste des tickets...");
+  try {
+    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
+    res.json(reports);
+  } catch (error: any) {
+    console.error("[TICKET] Erreur Lecture :", error.message);
+    res.status(500).json({ error: "Erreur lecture" });
+  }
+});
+
+app.patch("/api/reports/:id", express.json(), (req: any, res) => {
+  const { id } = req.params;
+  const { completed } = req.body;
+  console.log(`[TICKET] Mise à jour du ticket ${id} vers statut ${completed}`);
+  try {
+    db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("[TICKET] Erreur Patch :", error.message);
+    res.status(500).json({ error: "Erreur MAJ" });
+  }
+});
+  
 
   // --- GESTION DES ERREURS 404 DE L'API ---
   app.all("/api/*", (req, res) => {
@@ -901,6 +1041,37 @@ app.get("/api/abby/documents", async (req: any, res) => {
     );
     res.status(404).json({ error: "Route API introuvable", path: req.path });
   });
+  // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
+app.get("/api/reports", (req: any, res) => {
+  try {
+    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de la récupération" });
+  }
+});
+
+app.post("/api/reports", express.json(), (req: any, res) => {
+  const userId = getUserId(req);
+  const { content } = req.body;
+  try {
+    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de l'envoi" });
+  }
+});
+
+app.patch("/api/reports/:id", express.json(), (req: any, res) => {
+  const { id } = req.params;
+  const { completed } = req.body;
+  try {
+    db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur mise à jour" });
+  }
+});
 
   // --- VITE & SPA FALLBACK ---
   const vite = await createViteServer({
