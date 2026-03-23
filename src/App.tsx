@@ -1615,31 +1615,52 @@ const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, o
 
   const weekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-  const legend = [
-    { label: 'Projet perso', color: 'bg-purple-500' },
-    { label: 'Flash', color: 'bg-blue-500' },
-    { label: 'Retouches', color: 'bg-emerald-500' },
-    { label: 'RDV Préparatoire', color: 'bg-amber-500' },
-    { label: 'Event', color: 'bg-fuchsia-500' },
-    { label: 'Cadeau', color: 'bg-rose-500' },
-    { label: 'Congé', color: 'bg-red-500' },
+const legend = [
+    { label: 'Projet perso', color: 'bg-purple-600 text-white border border-purple-400' },
+    { label: 'Flash', color: 'bg-red-600 text-white border border-red-400' },
+    { label: 'Retouches', color: 'bg-emerald-600 text-white border border-emerald-400' },
+    { label: 'RDV Préparatoire', color: 'bg-amber-600 text-white border border-amber-400' },
+    { label: 'Event', color: 'bg-fuchsia-600 text-white border border-fuchsia-400' },
+    { label: 'Cadeau', color: 'bg-orange-600 text-white border border-orange-400' },
+    { label: 'Congé', color: 'bg-zinc-600 text-white border border-zinc-400' },
   ];
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
-  // Helper to get color based on appointment type
-  const getTypeColor = (type: string, client?: string) => {
+// Helper to get color based on appointment type
+  const getTypeColor = (type: string, client?: string, isTimeOff?: boolean) => {
+    // Si c'est un événement marqué comme "Congé", on force le gris
+    if (isTimeOff) {
+      return { bg: 'bg-zinc-600', text: 'text-white', border: 'border-zinc-400' };
+    }
+
     const t = (type || '').toLowerCase();
     const c = (client || '').toLowerCase();
-    if (t.includes('timeoff') || t.includes('congé') || t.includes('indisponibilité') || c.includes('congé')) return { bg: 'bg-red-500', text: 'text-red-400', border: 'border-red-500/50' };
-    if (t.includes('projet perso')) return { bg: 'bg-purple-500', text: 'text-purple-400', border: 'border-purple-500/50' };
-    if (t.includes('flash')) return { bg: 'bg-blue-500', text: 'text-blue-400', border: 'border-blue-500/50' };
-    if (t.includes('retouche')) return { bg: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-500/50' };
-    if (t.includes('préparatoire')) return { bg: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-500/50' };
-    if (t.includes('event')) return { bg: 'bg-fuchsia-500', text: 'text-fuchsia-400', border: 'border-fuchsia-500/50' };
-    if (t.includes('cadeau')) return { bg: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-500/50' };
-    return { bg: 'bg-lilas', text: 'text-lilas', border: 'border-lilas/50' };
+    
+    // Fallback au cas où un congé passerait par le texte
+    if (t.includes('timeoff') || t.includes('congé') || t.includes('indisponibilité') || c.includes('congé')) 
+      return { bg: 'bg-zinc-600', text: 'text-white', border: 'border-zinc-400' };
+    
+    if (t.includes('projet perso')) 
+      return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-400' };
+    
+    if (t.includes('flash')) 
+      return { bg: 'bg-red-600', text: 'text-white', border: 'border-red-400' };
+    
+    if (t.includes('retouche')) 
+      return { bg: 'bg-emerald-600', text: 'text-white', border: 'border-emerald-400' };
+    
+    if (t.includes('préparatoire')) 
+      return { bg: 'bg-amber-600', text: 'text-white', border: 'border-amber-400' };
+    
+    if (t.includes('event')) 
+      return { bg: 'bg-fuchsia-600', text: 'text-white', border: 'border-fuchsia-400' };
+    
+    if (t.includes('cadeau')) 
+      return { bg: 'bg-orange-600', text: 'text-white', border: 'border-orange-400' };
+    
+    return { bg: 'bg-slate-600', text: 'text-white', border: 'border-slate-400' };
   };
 
   // Premier jour du mois
@@ -1855,7 +1876,7 @@ const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, o
                           {dayTimeOff.slice(0, 2).map((off: any, idx: number) => (
                             <div 
                               key={`off-${idx}`} 
-                              className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-red-500 shadow-sm`}
+                              className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-zinc-400/20 shadow-sm`}
                               title={off.title}
                             ></div>
                           ))}
