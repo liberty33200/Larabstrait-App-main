@@ -2088,32 +2088,137 @@ const AccountingView = ({ appointments, rules, loading }: any) => {
 
   const startOfActivity = new Date('2024-02-01').getTime();
 
-  // Dynamic Chart Data
+// Dynamic Chart Data (Intelligent)
   const chartData = useMemo(() => {
-    const months = [];
+    const data = [];
     const monthNames = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
-    
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const monthName = monthNames[d.getMonth()];
-      
-      const monthRevenue = appointments
-        .filter((appt: any) => {
-          const apptDate = new Date(appt.rawDate);
-          const apptMonthKey = `${apptDate.getFullYear()}-${String(apptDate.getMonth() + 1).padStart(2, '0')}`;
-          return apptMonthKey === monthKey;
-        })
-        .reduce((sum: number, appt: any) => sum + (appt.total || 0), 0);
 
-      months.push({
-        month: monthName,
-        revenue: monthRevenue,
-        expenses: Math.round(monthRevenue * 0.25) // Estimated expenses for visual
-      });
+    // 1. MODE JOURNALIER (Un mois spécifique ou une courte période)
+    if (filterMode === 'this_month' || filterMode === 'this_month_past' || filterMode === 'last_month') {
+      let year = now.getFullYear();
+      let month = now.getMonth();
+
+      if (filterMode === 'last_month') {
+        month -= 1;
+        if (month < 0) { month = 11; year -= 1; }
+      }
+
+      // Nombre de jours dans ce mois précis
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+        
+        const dailyRevenue = appointments
+          .filter((appt: any) => {
+            if (!appt.rawDate) return false;
+            const apptDate = new Date(appt.rawDate);
+            const apptDateString = `${apptDate.getFullYear()}-${String(apptDate.getMonth() + 1).padStart(2, '0')}-${String(apptDate.getDate()).padStart(2, '0')}`;
+            return apptDateString === dateString;
+          })
+          .reduce((sum: number, appt: any) => sum + (appt.total || 0), 0);
+
+        data.push({
+          month: `${i} ${monthNames[month]}`, // On garde la clé "month" pour que le graphique fonctionne sans toucher au JSX
+          revenue: dailyRevenue,
+          expenses: Math.round(dailyRevenue * 0.25)
+        });
+      }
+    } 
+    // 2. MODE FOURCHETTE PERSONNALISÉE
+    else if (filterMode === 'custom_range' && dateRange.start && dateRange.end) {
+      const startDate = new Date(dateRange.start);
+      const endDate = new Date(dateRange.end);
+      const diffDays = Math.ceil(Math.abs(endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (diffDays <= 31) {
+        // Journalier si <= 31 jours
+        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+          const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const dailyRevenue = appointments
+            .filter((appt: any) => {
+              if (!appt.rawDate) return false;
+              const apptDate = new Date(appt.rawDate);
+              const apptDateString = `${apptDate.getFullYear()}-${String(apptDate.getMonth() + 1).padStart(2, '0')}-${String(apptDate.getDate()).padStart(2, '0')}`;
+              return apptDateString === dateString;
+            })
+            .reduce((sum: number, appt: any) => sum + (appt.total || 0), 0);
+            
+          data.push({
+            month: `${d.getDate()} ${monthNames[d.getMonth()]}`,
+            revenue: dailyRevenue,
+            expenses: Math.round(dailyRevenue * 0.25)
+          });
+        }
+      } else {
+        // Mensuel si > 31 jours
+        let d = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+        const endM = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+        while(d <= endM) {
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const label = d.getFullYear() !== now.getFullYear() ? `${monthNames[d.getMonth()]} ${String(d.getFullYear()).substring(2)}` : monthNames[d.getMonth()];
+          
+          const monthRevenue = appointments
+            .filter((appt: any) => {
+              if (!appt.rawDate) return false;
+              const apptDate = new Date(appt.rawDate);
+              return `${apptDate.getFullYear()}-${String(apptDate.getMonth() + 1).padStart(2, '0')}` === monthKey;
+            })
+            .reduce((sum: number, appt: any) => sum + (appt.total || 0), 0);
+
+          data.push({ month: label, revenue: monthRevenue, expenses: Math.round(monthRevenue * 0.25) });
+          d.setMonth(d.getMonth() + 1);
+        }
+      }
+    } 
+    // 3. MODE MENSUEL (Années, Trimestres, Historique...)
+    else {
+      let monthDates: Date[] = [];
+      
+      if (filterMode === 'this_year') {
+        for (let i = 0; i < 12; i++) monthDates.push(new Date(now.getFullYear(), i, 1));
+      } else if (filterMode === 'last_year') {
+        for (let i = 0; i < 12; i++) monthDates.push(new Date(now.getFullYear() - 1, i, 1));
+      } else if (filterMode === 'last_3_months') {
+        for (let i = 2; i >= 0; i--) monthDates.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+      } else if (filterMode === 'upcoming') {
+        for (let i = 0; i < 6; i++) monthDates.push(new Date(now.getFullYear(), now.getMonth() + i, 1));
+      } else if (filterMode === 'all') {
+        // Depuis le début de l'activité (Février 2024 d'après tes réglages) jusqu'au mois actuel
+        let d = new Date(startOfActivity);
+        const endM = new Date(now.getFullYear(), now.getMonth(), 1);
+        while(d <= endM) {
+          monthDates.push(new Date(d));
+          d.setMonth(d.getMonth() + 1);
+        }
+      } else {
+        for (let i = 5; i >= 0; i--) monthDates.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+      }
+
+      for (const d of monthDates) {
+        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const label = d.getFullYear() !== now.getFullYear() ? `${monthNames[d.getMonth()]} ${String(d.getFullYear()).substring(2)}` : monthNames[d.getMonth()];
+        
+        const monthRevenue = appointments
+          .filter((appt: any) => {
+            if (!appt.rawDate) return false;
+            const apptDate = new Date(appt.rawDate);
+            return `${apptDate.getFullYear()}-${String(apptDate.getMonth() + 1).padStart(2, '0')}` === monthKey;
+          })
+          .reduce((sum: number, appt: any) => sum + (appt.total || 0), 0);
+
+        data.push({
+          month: label,
+          revenue: monthRevenue,
+          expenses: Math.round(monthRevenue * 0.25)
+        });
+      }
     }
-    return months;
-  }, [appointments]);
+
+    return data;
+  // ⚠️ TRÈS IMPORTANT : J'ai ajouté 'dateRange' ici pour que la fourchette personnalisée recalcule le graphique !
+  }, [appointments, filterMode, dateRange]);
+  
 
   // On transforme les rendez-vous en entrées comptables
   const allEntries = appointments
@@ -2297,10 +2402,6 @@ const AccountingView = ({ appointments, rules, loading }: any) => {
         <div className="glass-card p-6">
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-bold text-lg">Évolution des Revenus</h3>
-            <select className="bg-transparent border-none text-sm text-gray-400 focus:ring-0 cursor-pointer">
-              <option>6 derniers mois</option>
-              <option>Cette année</option>
-            </select>
           </div>
           <div className="h-[400px] w-full">
             <ResponsiveContainer width="100%" height="100%">
