@@ -597,7 +597,8 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
     orderForm: appointment.orderForm || 'Non édité',
     location: appointment.location || '',
     projectRecap: appointment.projectRecap || '',
-    size: appointment.size || ''
+    size: appointment.size || '',
+    projectStatus: appointment.projectStatus || 'À dessiner'
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -650,8 +651,6 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
     }
   };
 
-  // NOUVELLE FONCTION POUR ENVOYER L'EMAIL
-  // On remplace l'ancien état par celui-ci qui gère les 3 phases : idle, success, error
   const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
 
   const handleSendPdf = async () => {
@@ -753,6 +752,11 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
         "Cadeau": 129690005
       };
 
+      const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
+      const finalDrawingStatus = needsDrawing 
+        ? (["À dessiner", "Dessiné", "Modifications", "Validé"].includes(formData.projectStatus) ? formData.projectStatus : "À dessiner")
+        : "Non nécessaire";
+
       const updatePayload: any = {
         cr7e0_daterdv: dateTime.toISOString(),
         cr7e0_tariftattoo: parseFloat(formData.total.toString()),
@@ -762,7 +766,9 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
         cr7e0_boncommande: (orderFormIds[formData.orderForm] || 129690001).toString(),
         cr7e0_emplacement: formData.location,
         cr7e0_recapitulatifprojet: formData.projectRecap,
-        cr7e0_taille: formData.size
+        cr7e0_taille: formData.size,
+        // TODO: Ajouter ici le champ Dataverse pour l'état du dessin (ex: cr7e0_etatdessin)
+        cr7e0_etatdessin: finalDrawingStatus
       };
 
       const response = await apiFetch(`/api/appointments/${appointment.id}`, {
@@ -970,6 +976,7 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
                   <p className="text-lg font-medium">{appointment.location || 'Non renseigné'}</p>
                 )}
               </div>
+              
               <div className="space-y-1">
                 <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Taille</label>
                 {isEditing ? (
@@ -984,6 +991,54 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
                   <p className="text-lg font-medium">{appointment.size || 'Non renseignée'}</p>
                 )}
               </div>
+
+              {/* NOUVEAU CHAMP : ÉTAT DU DESSIN */}
+              {/* CHAMP DYNAMIQUE : ÉTAT DU DESSIN */}
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-1">
+                  <span>État du dessin</span>
+                </label>
+                {isEditing ? (
+                  // Mode édition : On affiche le menu uniquement si c'est un des 3 styles concernés
+                  ["Flash", "Projet perso", "Cadeau"].includes(formData.style) ? (
+                    <select
+                      value={["À dessiner", "Dessiné", "Modifications", "Validé"].includes(formData.projectStatus) ? formData.projectStatus : "À dessiner"}
+                      onChange={(e) => setFormData({ ...formData, projectStatus: e.target.value })}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 text-white"
+                    >
+                      <option value="À dessiner" className="bg-gray-900">À dessiner</option>
+                      <option value="Dessiné" className="bg-gray-900">Dessiné</option>
+                      <option value="Modifications" className="bg-gray-900">Modifications</option>
+                      <option value="Validé" className="bg-gray-900">Validé</option>
+                    </select>
+                  ) : (
+                    // Sinon, on affiche un champ grisé "Non nécessaire"
+                    <div className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-gray-500 italic">
+                      Non nécessaire pour ce type de rendez-vous
+                    </div>
+                  )
+                ) : (
+                  // Mode lecture seule
+                  <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-gray-300 flex items-center space-x-3 w-fit">
+                    {["Flash", "Projet perso", "Cadeau"].includes(formData.style) ? (
+                      <>
+                        <div className={`w-2 h-2 rounded-full ${
+                          formData.projectStatus === 'Validé' ? 'bg-emerald-500' : 
+                          formData.projectStatus === 'Modifications' ? 'bg-amber-500' : 
+                          formData.projectStatus === 'Dessiné' ? 'bg-blue-500' : 'bg-gray-500'
+                        }`}></div>
+                        <span>{formData.projectStatus === 'Non nécessaire' ? 'À dessiner' : formData.projectStatus}</span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-2 h-2 rounded-full bg-gray-600"></div>
+                        <span className="text-gray-500 italic">Non nécessaire</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="md:col-span-2 space-y-1">
                 <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Récap Projet</label>
                 {isEditing ? (
@@ -1146,8 +1201,6 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
             </button>
           </div>
 
-          
-
           <div className="glass-card p-6 bg-rose-500/5 border border-rose-500/10">
             <button 
               onClick={() => setShowDeleteConfirm(true)}
@@ -1228,13 +1281,11 @@ const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment
       const hasTotal = total > 0;
       const isFree = total === 0;
 
-      // Un dossier est "A contrôler" si ce n'est pas gratuit ET (pas d'acompte OU tarif <= 0)
       if (!isFree && (!hasDeposit || !hasTotal)) {
         baseStatus = "A contrôler";
       }
     }
 
-    // Final mapping based on Order Form
     if (baseStatus === "A contrôler") {
       if (orderForm === "Non édité") {
         return { label: "A contrôler + BDC", color: "bg-rose-500/10 text-rose-400 border border-rose-500/20" };
@@ -1268,14 +1319,19 @@ const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment
     getControlStatus(appt).label !== "Complété"
   );
 
-  // Extraire le prénom pour le message de bienvenue
+  // NOUVEAU FILTRE : Projets à dessiner
+  const appointmentsToDraw = upcomingAppointments.filter((appt: any) => 
+    ["Flash", "Projet perso", "Cadeau"].includes(appt.style) &&
+    appt.projectStatus !== "Validé" &&
+    appt.projectStatus !== "Non nécessaire"
+  );
+
   const firstName = user?.name ? user.name.split(' ')[0] : 'Florent';
 
   const displayedAppointments = showAllAppointments 
     ? upcomingAppointments 
     : upcomingAppointments.slice(0, 5);
 
-  // Accounting stats for current month
   const monthEntries = appointments.filter((appt: any) => 
     (appt.rawDate || 0) >= startOfMonth && (appt.rawDate || 0) <= endOfMonth
   );
@@ -1352,66 +1408,116 @@ const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment
           </div>
 
           <div className="space-y-4">
-            {incompleteAppointments.length > 0 ? (
-              incompleteAppointments.map((appt: any, i: number) => (
-                <motion.div 
-                  key={appt.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.1 }}
-                  onClick={() => onSelectAppointment(appt)}
-                  className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-amber-500/30"
-                >
-                  <div className="flex items-center space-x-5">
-                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-amber-500 font-bold text-lg border border-white/10 shrink-0">
-                      {appt.client.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="font-semibold text-lg group-hover:text-amber-500 transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400">
-                        <span className="flex items-center space-x-1 shrink-0">
-                          <Calendar size={14} />
-                          <span>{appt.date || 'À définir'}</span>
-                        </span>
-                        <span className="flex items-center space-x-1 shrink-0">
-                          <Clock size={14} />
-                          <span>{appt.time || '14:00'}</span>
-                        </span>
-                      </div>
+            {incompleteAppointments.map((appt: any, i: number) => (
+              <motion.div 
+                key={`inc-${appt.id}`}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+                onClick={() => onSelectAppointment(appt)}
+                className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-amber-500/30"
+              >
+                <div className="flex items-center space-x-5">
+                  <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-amber-500 font-bold text-lg border border-white/10 shrink-0">
+                    {appt.client.charAt(0)}
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="font-semibold text-lg group-hover:text-amber-500 transition-colors truncate">{appt.client}</h4>
+                    <div className="flex items-center space-x-3 text-sm text-gray-400">
+                      <span className="flex items-center space-x-1 shrink-0">
+                        <Calendar size={14} />
+                        <span>{appt.date || 'À définir'}</span>
+                      </span>
+                      <span className="flex items-center space-x-1 shrink-0">
+                        <Clock size={14} />
+                        <span>{appt.time || '14:00'}</span>
+                      </span>
                     </div>
                   </div>
-
-                  <div className="flex flex-col items-end text-right">
-                    <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
-                    <p className="text-sm md:text-lg font-bold text-amber-500 leading-tight">{appt.price}</p>
-                  </div>
-                  
-                  <div className="hidden md:flex justify-center">
-                    {(() => {
-                      const status = getControlStatus(appt);
-                      return (
-                        <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${status.color}`}>
-                          {status.label}
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="hidden sm:flex justify-end">
-                    <button className="p-2 text-gray-500 hover:text-white transition-colors">
-                      <ChevronRight size={20} />
-                    </button>
-                  </div>
-                </motion.div>
-              ))
-            ) : (
-              <div className="glass-card p-8 text-center border-dashed border-white/5">
-                <div className="flex flex-col items-center space-y-2 opacity-40">
-                  <CheckCircle2 size={32} className="text-emerald-400" />
-                  <p className="text-sm font-medium">Tous vos dossiers sont complétés !</p>
                 </div>
-              </div>
-            )}
+
+                <div className="flex flex-col items-end text-right">
+                  <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
+                  <p className="text-sm md:text-lg font-bold text-amber-500 leading-tight">{appt.price}</p>
+                </div>
+                
+                <div className="hidden md:flex justify-center">
+                  {(() => {
+                    const status = getControlStatus(appt);
+                    return (
+                      <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${status.color}`}>
+                        {status.label}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="hidden sm:flex justify-end">
+                  <button className="p-2 text-gray-500 hover:text-white transition-colors">
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* NOUVELLE SECTION : PROJETS À DESSINER */}
+      {appointmentsToDraw.length > 0 && (
+        <section className="mb-10">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center space-x-3">
+              <div className="w-1 h-6 bg-blue-500 rounded-full" />
+              <h3 className="text-xl md:text-2xl font-bold tracking-tight text-blue-500">Projets à dessiner</h3>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {appointmentsToDraw.map((appt: any, i: number) => (
+              <motion.div 
+                key={`draw-${appt.id}`}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+                onClick={() => onSelectAppointment(appt)}
+                className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-blue-500/30"
+              >
+                <div className="flex items-center space-x-5">
+                  <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-blue-500 font-bold text-lg border border-white/10 shrink-0">
+                    <Edit2 size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="font-semibold text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
+                    <div className="flex items-center space-x-3 text-sm text-gray-400">
+                      <span className="flex items-center space-x-1 shrink-0">
+                        <Calendar size={14} />
+                        <span>{appt.date || 'À définir'}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end text-right">
+                  <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
+                </div>
+                
+                <div className="hidden md:flex justify-center">
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap 
+                    ${appt.projectStatus === 'À dessiner' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 
+                      appt.projectStatus === 'Modifications' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
+                      'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
+                    {appt.projectStatus || 'À dessiner'}
+                  </div>
+                </div>
+
+                <div className="hidden sm:flex justify-end">
+                  <button className="p-2 text-gray-500 hover:text-white transition-colors">
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
           </div>
         </section>
       )}
@@ -1445,7 +1551,7 @@ const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment
           ) : (
             displayedAppointments.map((appt: any, i: number) => (
               <motion.div 
-                key={appt.id}
+                key={`up-${appt.id}`}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 + (i * 0.1) }}
@@ -1477,19 +1583,15 @@ const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment
                 </div>
                 
                 <div className="hidden md:flex justify-center">
-                  {(() => {
-                    const status = getControlStatus(appt);
-                    return (
-                      <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${status.color}`}>
-                        {status.label}
-                      </div>
-                    );
-                  })()}
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap 
+                    ${appt.status === 'Payé' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-white/5 text-gray-300 border-white/10'} border`}>
+                    {appt.status}
+                  </div>
                 </div>
 
                 <div className="hidden sm:flex justify-end">
                   <button className="p-2 text-gray-500 hover:text-white transition-colors">
-                    <MoreVertical size={20} />
+                    <ChevronRight size={20} />
                   </button>
                 </div>
               </motion.div>
@@ -2965,6 +3067,8 @@ const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: any) =>
         "Cadeau": 129690005
       };
 
+      const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
+
       const createPayload: any = {
         cr7e0_nomclient: clientName,
         cr7e0_email: clientEmail,
@@ -2976,7 +3080,9 @@ const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: any) =>
         cr7e0_boncommande: (orderFormIds[formData.orderForm] || 129690001).toString(),
         cr7e0_emplacement: formData.location,
         cr7e0_recapitulatifprojet: formData.projectRecap,
-        cr7e0_taille: formData.size
+        cr7e0_taille: formData.size,
+        // Assigne "À dessiner" ou "Non nécessaire" selon le style choisi à la création
+        cr7e0_etatdessin: needsDrawing ? 'À dessiner' : 'Non nécessaire'
       };
 
       const response = await apiFetch('/api/appointments', {
@@ -3329,7 +3435,11 @@ const BugReportView = ({ apiFetch }: any) => {
 
   const handleSubmit = async () => {
     if (!content.trim() || status === 'sending') return;
+    
+    console.log("\n--- DEBUG FRONTEND : TENTATIVE D'ENVOI ---");
+    console.log("Contenu :", content);
     setStatus('sending');
+    
     try {
       const res = await apiFetch('/api/reports', {
         method: 'POST',
@@ -3337,16 +3447,24 @@ const BugReportView = ({ apiFetch }: any) => {
         body: JSON.stringify({ content: content.trim() })
       });
 
+      console.log("Code HTTP de la réponse :", res.status);
+      
+      // On lit le texte brut pour éviter un crash si le serveur renvoie du HTML (ex: 404)
+      const textData = await res.text();
+      console.log("Réponse brute du serveur :", textData);
+
       if (res.ok) {
         setStatus('success');
         setContent('');
         fetchReports();
         setTimeout(() => setStatus('idle'), 2000);
       } else {
+        console.error("ÉCHEC : Le serveur a renvoyé une erreur.");
         setStatus('error');
         setTimeout(() => setStatus('idle'), 3000);
       }
-    } catch (e) {
+    } catch (e: any) {
+      console.error("ERREUR RÉSEAU CRITIQUE (Frontend) :", e.message);
       setStatus('error');
       setTimeout(() => setStatus('idle'), 3000);
     }
@@ -3687,7 +3805,8 @@ return {
   status: hasDeposit ? 'Payé' : 'Confirmé',
   method: 'N/A',
   price: `${appt.cr7e0_tariftattoo || 0} €`,
-  isTimeOff
+  isTimeOff,
+  projectStatus: appt.cr7e0_etatdessin || 'À dessiner'
 };
       });
 

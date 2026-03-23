@@ -901,8 +901,8 @@ app.get("/api/abby/documents", async (req: any, res) => {
       res.status(500).json({ error: error.message });
     }
   });
+  
   // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
-// --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
 app.get("/api/reports", (req: any, res) => {
   try {
     const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
@@ -912,7 +912,7 @@ app.get("/api/reports", (req: any, res) => {
   }
 });
 
-app.post("/api/reports", express.json(), (req: any, res) => {
+app.post("/api/reports", express.json(), async (req: any, res) => {
   const userId = getUserId(req);
   const { content } = req.body;
 
@@ -923,7 +923,7 @@ app.post("/api/reports", express.json(), (req: any, res) => {
   try {
     db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
 
-    // Notification Push
+    // Récupération des appareils abonnés
     const subscriptions = db.prepare("SELECT subscription FROM subscriptions").all();
     const notificationPayload = JSON.stringify({
       title: "Nouveau Ticket / Bug 🐞",
@@ -931,14 +931,24 @@ app.post("/api/reports", express.json(), (req: any, res) => {
       url: "/" 
     });
 
-    subscriptions.forEach((sub: any) => {
-      try {
-        webpush.sendNotification(JSON.parse(sub.subscription), notificationPayload).catch(() => {});
-      } catch (e) {}
-    });
+    // On force le serveur à ATTENDRE que toutes les notifications soient parties
+    await Promise.all(
+      subscriptions.map((sub: any) =>
+        webpush
+          .sendNotification(JSON.parse(sub.subscription), notificationPayload)
+          .catch((err) => {
+            console.error("Échec d'envoi Push (ticket) :", err.message);
+            // On en profite pour nettoyer la base si un appareil n'existe plus
+            if (err.statusCode === 410 || err.statusCode === 404) {
+              db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription);
+            }
+          })
+      )
+    );
 
     res.json({ success: true });
   } catch (error: any) {
+    console.error("Erreur POST Reports:", error.message);
     res.status(500).json({ error: "Erreur écriture" });
   }
 });
@@ -963,46 +973,12 @@ app.delete("/api/reports/completed", (req: any, res) => {
   }
 });
 
-  // --- GESTION DES ERREURS 404 DE L'API ---
-
-  // --- GESTION DES ERREURS 404 DE L'API ---
-  app.all("/api/*", (req, res) => {
-    console.error(
-      `[404] Le frontend a tenté d'appeler une route inexistante : ${req.method} ${req.path}`
-    );
-    res.status(404).json({ error: "Route API introuvable", path: req.path });
-  });
-  // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
-app.get("/api/reports", (req: any, res) => {
-  try {
-    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
-    res.json(reports);
-  } catch (error) {
-    res.status(500).json({ error: "Erreur lors de la récupération" });
-  }
+// --- GESTION DES ERREURS 404 DE L'API ---
+app.all("/api/*", (req, res) => {
+  console.error(`[404] Le frontend a tenté d'appeler une route inexistante : ${req.method} ${req.path}`);
+  res.status(404).json({ error: "Route API introuvable", path: req.path });
 });
 
-app.post("/api/reports", express.json(), (req: any, res) => {
-  const userId = getUserId(req);
-  const { content } = req.body;
-  try {
-    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Erreur lors de l'envoi" });
-  }
-});
-
-app.patch("/api/reports/:id", express.json(), (req: any, res) => {
-  const { id } = req.params;
-  const { completed } = req.body;
-  try {
-    db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Erreur mise à jour" });
-  }
-});
 
   // --- VITE & SPA FALLBACK ---
   const vite = await createViteServer({
