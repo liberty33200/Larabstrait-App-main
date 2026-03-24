@@ -10,6 +10,7 @@ import cookieParser from "cookie-parser";
 import * as msal from "@azure/msal-node";
 import webpush from "web-push";
 import Database from "better-sqlite3";
+import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
 import {
   fetchDataverse,
@@ -48,6 +49,8 @@ db.exec(`
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+
 
 // Configuration Web Push
 const vapidKeys = {
@@ -167,8 +170,131 @@ async function startServer() {
   }
 
   app.set("trust proxy", true);
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.use(cookieParser());
+
+  app.post('/api/appointments/:id/consent', express.json({ limit: '50mb' }), async (req: any, res) => {
+  const appointmentId = req.params.id;
+  const { pdfData, clientName, appointmentDate } = req.body;
+
+  try {
+    // 1. GESTION DE LA SESSION / AUTH MICROSOFT
+    let userAccountId = req.session?.user?.homeAccountId;
+    if (!userAccountId) {
+      const accounts = await cca.getTokenCache().getAllAccounts();
+      if (accounts.length > 0) userAccountId = accounts[0].homeAccountId;
+      else return res.status(401).json({ error: "Non authentifié" });
+    }
+
+    const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
+    const authResult = await cca.acquireTokenSilent({
+      account: account!,
+      scopes: ["Mail.Send"]
+    });
+    const graphToken = authResult.accessToken;
+
+    // 2. NETTOYAGE DES VARIABLES POUR LE NOM DU FICHIER
+    const cleanName = clientName
+      ? clientName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_")
+      : "Client";
+
+    // Nettoyage de la date (ex: "17-03-2025")
+    const dateStr = appointmentDate 
+  ? appointmentDate.toString()
+      .replace(/[\/\.\s]+/g, '-') // Remplace / . et espaces par -
+      .replace(/-+/g, '-')        // Évite les doubles tirets --
+      .replace(/^-+|-+$/g, '')    // Enlève les tirets au début ou à la fin
+  : "Date_Inconnue";
+
+    const fileName = `Consentement_${cleanName}_${dateStr}.pdf`;
+    console.log("💾 NOM GÉNÉRÉ :", fileName);
+
+    // --- ICI EST LA CORRECTION DU DOUBLON ---
+    // On déclare base64Data UNE SEULE FOIS
+    const base64Data = pdfData.includes('base64,') ? pdfData.split('base64,')[1] : pdfData;
+
+    // 3. SAUVEGARDE SUR LE NAS
+    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+    if (!fs.existsSync(dechargesDir)) {
+      fs.mkdirSync(dechargesDir, { recursive: true });
+    }
+
+    const filePath = path.join(dechargesDir, fileName);
+    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+    console.log("📂 Sauvegarde NAS OK :", fileName);
+
+    // 4. ENVOI DU MAIL VIA MS GRAPH
+    const emailPayload = {
+      message: {
+        subject: `🖋️ Décharge signée : ${clientName}`,
+        body: {
+          contentType: "HTML",
+          content: `<p>Bonjour,</p><p>Une nouvelle décharge a été signée par <b>${clientName}</b> pour le rendez-vous du ${dateStr}.</p>`
+        },
+        toRecipients: [{ emailAddress: { address: process.env.EMAIL_STUDIO } }],
+        attachments: [{
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: `Consentement_${cleanName}_${dateStr}.pdf`,
+          contentType: "application/pdf",
+          contentBytes: base64Data
+        }]
+      }
+    };
+
+    await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
+      headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" }
+    });
+    
+    console.log("📧 Email envoyé OK");
+    res.json({ success: true, message: "Enregistrement et Email terminés !" });
+
+  } catch (error: any) {
+    console.error("❌ Erreur traitement décharge :", error.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Route pour VERIFIER et TELECHARGER
+app.get('/api/appointments/:id/download-consent', (req, res) => {
+  const appointmentId = req.params.id;
+  const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+
+  if (!fs.existsSync(dechargesDir)) return res.status(404).send("Dossier vide");
+
+  const files = fs.readdirSync(dechargesDir);
+  // On cherche le fichier qui CONTIENT l'ID (peu importe le nom du client autour)
+  const targetFile = files.find(f => f.includes(appointmentId) && f.endsWith('.pdf'));
+
+  if (targetFile) {
+    const filePath = path.join(dechargesDir, targetFile);
+    res.download(filePath);
+  } else {
+    res.status(404).json({ error: "Fichier non trouvé" });
+  }
+});
+
+// Route pour le CHECK (Bouton vert)
+app.get('/api/appointments/:id/check-consent', (req, res) => {
+  const appointmentId = req.params.id;
+  const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+
+  if (!fs.existsSync(dechargesDir)) return res.json({ exists: false });
+
+  const files = fs.readdirSync(dechargesDir);
+  const exists = files.some(f => f.includes(appointmentId));
+
+  res.json({ exists });
+});
+
+// Route pour vérifier si une décharge existe déjà
+app.get('/api/appointments/:id/check-consent', (req, res) => {
+  const appointmentId = req.params.id;
+  const filePath = path.join(process.cwd(), 'data', 'decharges', `Consentement_${appointmentId}.pdf`);
+  
+  // On renvoie simplement true ou false
+  res.json({ exists: fs.existsSync(filePath) });
+});
 
   const sessionSecret =
     process.env.SESSION_SECRET || "tattoo-studio-secret-v3";
@@ -350,6 +476,8 @@ async function startServer() {
       res.status(500).json({ error: "Erreur lors de l'envoi de l'email" });
     }
   });
+
+
 
   app.get("/api/auth/callback", (req: any, res) => {
     cca
@@ -1114,10 +1242,15 @@ cron.schedule('* * * * *', async () => {
     console.error("Erreur Cron optimisé:", error.message);
   }
 });
+console.log("✅ LA ROUTE /api/appointments/:id/consent EST CHARGÉE");
+
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`>>> SERVEUR DÉMARRÉ SUR LE PORT ${PORT} <<<`);
   });
+
+
 }
+
 
 startServer().catch(console.error);

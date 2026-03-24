@@ -24,8 +24,5 @@ services:
       - ABBY_API_KEY=${ABBY_API_KEY}
       - abby_api_key=${abby_api_key}
     volumes:
-      # On ne sauvegarde QUE le dossier des données, pas le code !
-      - larabstrait_data:/app/data
-
-volumes:
-  larabstrait_data:
+      # On lie le dossier interne /app/data au dossier visible du NAS
+      - /volume1/docker/larabstrait-app/data:/app/data
