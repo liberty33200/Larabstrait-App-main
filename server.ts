@@ -20,6 +20,11 @@ import {
 
 dotenv.config();
 
+const dataDir = path.join(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
 // Initialisation de la base de données pour les notifications et paramètres
 const db = new Database("./data/notifications.db", { verbose: console.log });
 db.exec(`
