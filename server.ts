@@ -20,13 +20,14 @@ import {
 
 dotenv.config();
 
+// 1. On s'assure que le dossier "data" existe
 const dataDir = path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialisation de la base de données pour les notifications et paramètres
-const db = new Database("notifications.db");
+// 2. On range la base de données DEDANS
+const db = new Database(path.join(dataDir, 'notifications.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
