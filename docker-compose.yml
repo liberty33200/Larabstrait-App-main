@@ -26,6 +26,7 @@ services:
       # Ajoute ici d'autres variables si tu en as dans ton .env (Abby, etc.)
     volumes:
       - larabstrait_data:/app/data
+      - data-volume:/app
 
 volumes:
   larabstrait_data:
