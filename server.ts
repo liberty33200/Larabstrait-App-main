@@ -21,7 +21,7 @@ import {
 dotenv.config();
 
 // Initialisation de la base de données pour les notifications et paramètres
-const db = new Database("notifications.db");
+const db = new Database("./data/notifications.db", { verbose: console.log });
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
