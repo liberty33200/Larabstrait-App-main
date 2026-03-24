@@ -23,10 +23,9 @@ services:
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
       - ABBY_API_KEY=${ABBY_API_KEY}
       - abby_api_key=${abby_api_key}
-      # Ajoute ici d'autres variables si tu en as dans ton .env (Abby, etc.)
     volumes:
+      # On ne sauvegarde QUE le dossier des données, pas le code !
       - larabstrait_data:/app/data
-      - data-volume:/app
 
 volumes:
   larabstrait_data:
