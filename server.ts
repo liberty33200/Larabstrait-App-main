@@ -26,7 +26,7 @@ if (!fs.existsSync(dataDir)) {
 }
 
 // Initialisation de la base de données pour les notifications et paramètres
-const db = new Database("./data/notifications.db", { verbose: console.log });
+const db = new Database("notifications.db");
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -972,12 +972,19 @@ app.get("/api/abby/documents", async (req: any, res) => {
   });
   
   // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
-app.get("/api/reports", (req: any, res) => {
+app.get('/api/reports', (req, res) => {
   try {
-    const reports = db.prepare("SELECT * FROM reports ORDER BY completed ASC, timestamp DESC").all();
+    // Ton code actuel qui lit la base de données...
+    const stmt = db.prepare("SELECT * FROM reports ORDER BY timestamp DESC");
+    const reports = stmt.all();
     res.json(reports);
   } catch (error: any) {
-    res.status(500).json({ error: "Erreur lecture" });
+    // 👇 LA LIGNE MAGIQUE 👇
+    // On force le serveur à envoyer le texte exact de l'erreur au frontend
+    res.status(500).json({ 
+      error: "Erreur SQL détaillée", 
+      details: error.message 
+    });
   }
 });
 
