@@ -440,11 +440,75 @@ async function startServer() {
       res.status(500).json({ error: error.message });
     }
   });
-
-  app.post("/api/appointments", async (req, res) => {
+  // Création RDV + envoi email automatique de confirmation (si email fourni) grâce à MS Graph
+  app.post("/api/appointments", express.json(), async (req: any, res) => {
     try {
+      // 1. Création du rendez-vous dans la base de données Dataverse
       const result = await createDataverse("cr7e0_gestiontatouages", req.body);
+
+      // 2. Envoi de l'email automatique (Uniquement si une adresse email a été fournie)
+      const clientEmail = req.body.cr7e0_email;
+      const clientName = req.body.cr7e0_nomclient || 'Client';
+      const rawDate = req.body.cr7e0_daterdv; // Date au format ISO envoyée par le frontend
+      const userAccountId = req.session?.user?.homeAccountId;
+
+      // On vérifie qu'on a bien l'email, la date et qu'on est authentifié
+      if (clientEmail && userAccountId && rawDate) {
+        try {
+          // Formatage de la date pour que ce soit joli dans l'email (ex: "jeudi 15 mai 2024 à 14:00")
+          const dateObj = new Date(rawDate);
+          const formattedDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+          const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+          // Récupération du jeton Microsoft Graph
+          const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
+          if (account) {
+            const authResult = await cca.acquireTokenSilent({
+              account: account,
+              scopes: ["Mail.Send"]
+            });
+            
+            const graphToken = authResult.accessToken;
+
+            // Préparation de l'email sans pièce jointe
+            const emailPayload = {
+              message: {
+                subject: "Confirmation de votre rendez-vous - Larabstrait",
+                body: {
+                  contentType: "HTML",
+                  content: `
+                    <p>Hello,</p>
+                    <p>Ton rendez-vous est bien confirmé pour le <strong>${formattedDate} à ${formattedTime}</strong>.</p>
+                    <p>N'hésite pas à me contacter si tu as la moindre question ou un empêchement d'ici là.</p>
+                    <p>À très vite ! 🖤</p>
+                    <p>Lara - Larabstrait</p>
+                  `
+                },
+                toRecipients: [{ emailAddress: { address: clientEmail } }]
+                // Pas de bloc "attachments" ici !
+              },
+              saveToSentItems: "true" // Garde une trace dans ta boîte mail
+            };
+
+            // Envoi de l'email
+            await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
+              headers: { 
+                Authorization: `Bearer ${graphToken}`,
+                "Content-Type": "application/json"
+              }
+            });
+            
+            console.log(`[Email] Confirmation envoyée automatiquement à ${clientEmail}`);
+          }
+        } catch (mailError: any) {
+          // Si l'email plante, on l'affiche dans la console du serveur, mais on NE FAIT PAS planter la création du RDV
+          console.error("[Graph Error - Email automatique]:", mailError.response?.data || mailError.message);
+        }
+      }
+
+      // 3. On répond au frontend que le RDV est bien créé
       res.status(201).json(result);
+
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
