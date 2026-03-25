@@ -472,9 +472,17 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
       res.json({ success: true, message: "Email envoyé avec succès" });
 
     } catch (error: any) {
-      console.error("[Graph Error]:", error.response?.data || error.message);
-      res.status(500).json({ error: "Erreur lors de l'envoi de l'email" });
-    }
+  console.error("❌ ERREUR :");
+  
+  if (error.response && error.response.data) {
+    // Cela va afficher le message précis de Microsoft (ex: "The property 'address' is required")
+    console.error("Détails Microsoft Graph :", JSON.stringify(error.response.data, null, 2));
+  } else {
+    console.error("Erreur message :", error.message);
+  }
+  
+  res.status(500).json({ error: "Erreur d'envoi" });
+}
   });
 
 
