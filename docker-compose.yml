@@ -13,6 +13,7 @@ services:
       - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
       - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
       - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - EMAIL_STUDIO=${EMAIL_STUDIO}
       # On fait le pont pour l'URL de l'app et les notifications
       - REDIRECT_URI=${REDIRECT_URI}
       - REDIRECT_URL=${REDIRECT_URL}
