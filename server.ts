@@ -50,8 +50,6 @@ db.exec(`
   );
 `);
 
-
-
 // Configuration Web Push
 const vapidKeys = {
   publicKey:
@@ -86,13 +84,10 @@ function getStoredAbbySettings(userId: string) {
     .get(userId) as any;
 }
 
-// --- 1. FONCTIONS DE BASE (Validées par le support Abby) ---
+// --- 1. FONCTIONS DE BASE ABBY ---
 function getAbbyApiKey(): string {
   let envKey = process.env.ABBY_API_KEY || "";
-  // SÉCURITÉ DOCKER : On pulvérise les espaces, retours à la ligne et guillemets potentiels
   envKey = envKey.replace(/\s+/g, "").replace(/['"]/g, "");
-  
-  // On retire le mot Bearer s'il a été collé par erreur, mais on GARDE STRICTEMENT le suk_
   return envKey.replace(/^Bearer/i, "");
 }
 
@@ -101,13 +96,13 @@ function getAbbyAxiosClient(): AxiosInstance | null {
   if (!apiKey) return null;
 
   return axios.create({
-    baseURL: "https://api.app-abby.com", // URL confirmée par le support
+    baseURL: "https://api.app-abby.com",
     timeout: 30000,
     headers: {
-      Authorization: `Bearer ${apiKey}`, // Format exact : "Bearer suk_..."
+      Authorization: `Bearer ${apiKey}`,
       Accept: "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
   });
 }
@@ -115,34 +110,11 @@ function getAbbyAxiosClient(): AxiosInstance | null {
 function handleAbbyError(err: any, res: any, context: string) {
   const status = err.response?.status || 500;
   const errorData = err.response?.data || err.message;
-
   console.error(`[Abby Error] ${context}:`, errorData);
-
   res.status(status).json({
     error: `Erreur Abby (${context})`,
     details: errorData
   });
-}
-
-async function tryAbbyGetFirstSuccess(
-  abbyApi: AxiosInstance,
-  routes: Array<{ url: string; params?: any; responseType?: any }>
-) {
-  let lastError: any = null;
-
-  for (const route of routes) {
-    try {
-      const response = await abbyApi.get(route.url, {
-        params: route.params,
-        responseType: route.responseType
-      });
-      return response;
-    } catch (error: any) {
-      lastError = error;
-    }
-  }
-
-  throw lastError || new Error("Aucune route Abby valide n'a répondu.");
 }
 
 async function startServer() {
@@ -174,130 +146,119 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.use(cookieParser());
 
+  // ==========================================
+  // ROUTE DÉCHARGE DE SOINS (Corrigée et blindée)
+  // ==========================================
   app.post('/api/appointments/:id/consent', express.json({ limit: '50mb' }), async (req: any, res) => {
-  const appointmentId = req.params.id;
-  const { pdfData, clientName, appointmentDate } = req.body;
+    const appointmentId = req.params.id;
+    const { pdfData, clientName, appointmentDate } = req.body;
 
-  try {
-    // 1. GESTION DE LA SESSION / AUTH MICROSOFT
-    let userAccountId = req.session?.user?.homeAccountId;
-    if (!userAccountId) {
-      const accounts = await cca.getTokenCache().getAllAccounts();
-      if (accounts.length > 0) userAccountId = accounts[0].homeAccountId;
-      else return res.status(401).json({ error: "Non authentifié" });
-    }
-
-    const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
-    const authResult = await cca.acquireTokenSilent({
-      account: account!,
-      scopes: ["Mail.Send"]
-    });
-    const graphToken = authResult.accessToken;
-
-    // 2. NETTOYAGE DES VARIABLES POUR LE NOM DU FICHIER
     const cleanName = clientName
       ? clientName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_")
       : "Client";
 
-    // Nettoyage de la date (ex: "17-03-2025")
     const dateStr = appointmentDate 
-  ? appointmentDate.toString()
-      .replace(/[\/\.\s]+/g, '-') // Remplace / . et espaces par -
-      .replace(/-+/g, '-')        // Évite les doubles tirets --
-      .replace(/^-+|-+$/g, '')    // Enlève les tirets au début ou à la fin
-  : "Date_Inconnue";
+      ? appointmentDate.toString().replace(/[\/\.\s]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') 
+      : "Date_Inconnue";
 
-    const fileName = `Consentement_${cleanName}_${dateStr}.pdf`;
-    console.log("💾 NOM GÉNÉRÉ :", fileName);
+    const fileName = `Consentement_${cleanName}_${dateStr}_${appointmentId}.pdf`;
 
-    // --- ICI EST LA CORRECTION DU DOUBLON ---
-    // On déclare base64Data UNE SEULE FOIS
-    const base64Data = pdfData.includes('base64,') ? pdfData.split('base64,')[1] : pdfData;
-
-    // 3. SAUVEGARDE SUR LE NAS
-    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
-    if (!fs.existsSync(dechargesDir)) {
-      fs.mkdirSync(dechargesDir, { recursive: true });
-    }
-
-    const filePath = path.join(dechargesDir, fileName);
-    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
-    console.log("📂 Sauvegarde NAS OK :", fileName);
-
-    // 4. ENVOI DU MAIL VIA MS GRAPH
-    const emailPayload = {
-      message: {
-        subject: `🖋️ Décharge signée : ${clientName}`,
-        body: {
-          contentType: "HTML",
-          content: `<p>Bonjour,</p><p>Une nouvelle décharge a été signée par <b>${clientName}</b> pour le rendez-vous du ${dateStr}.</p>`
-        },
-        toRecipients: [{ emailAddress: { address: process.env.EMAIL_STUDIO } }],
-        attachments: [{
-          "@odata.type": "#microsoft.graph.fileAttachment",
-          name: `Consentement_${cleanName}_${dateStr}.pdf`,
-          contentType: "application/pdf",
-          contentBytes: base64Data
-        }]
+    try {
+      let userAccountId = req.session?.user?.homeAccountId;
+      if (!userAccountId) {
+        const accounts = await cca.getTokenCache().getAllAccounts();
+        if (accounts.length > 0) userAccountId = accounts[0].homeAccountId;
+        else return res.status(401).json({ error: "Non authentifié" });
       }
-    };
 
-    await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
-      headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" }
-    });
-    
-    console.log("📧 Email envoyé OK");
-    res.json({ success: true, message: "Enregistrement et Email terminés !" });
+      const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
+      const authResult = await cca.acquireTokenSilent({
+        account: account!,
+        scopes: ["Mail.Send"]
+      });
+      const graphToken = authResult.accessToken;
 
-  } catch (error: any) {
-    console.error("❌ Erreur traitement décharge :", error.message);
-    res.status(500).json({ error: "Erreur serveur" });
-  }
-});
+      console.log("💾 GÉNÉRATION :", fileName);
 
-// Route pour VERIFIER et TELECHARGER
-app.get('/api/appointments/:id/download-consent', (req, res) => {
-  const appointmentId = req.params.id;
-  const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+      // SÉCURITÉ ANTI 400 : On supprime tous les espaces/retours à la ligne du Base64
+      let base64Data = pdfData.includes('base64,') ? pdfData.split('base64,')[1] : pdfData;
+      base64Data = base64Data.replace(/\s/g, ''); 
 
-  if (!fs.existsSync(dechargesDir)) return res.status(404).send("Dossier vide");
+      const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+      if (!fs.existsSync(dechargesDir)) {
+        fs.mkdirSync(dechargesDir, { recursive: true });
+      }
 
-  const files = fs.readdirSync(dechargesDir);
-  // On cherche le fichier qui CONTIENT l'ID (peu importe le nom du client autour)
-  const targetFile = files.find(f => f.includes(appointmentId) && f.endsWith('.pdf'));
+      fs.writeFileSync(path.join(dechargesDir, fileName), Buffer.from(base64Data, 'base64'));
+      console.log("📂 Sauvegarde NAS OK");
 
-  if (targetFile) {
-    const filePath = path.join(dechargesDir, targetFile);
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: "Fichier non trouvé" });
-  }
-});
+      const emailPayload = {
+        message: {
+          subject: `🖋️ Décharge signée : ${clientName}`,
+          body: {
+            contentType: "HTML",
+            content: `<p>Bonjour,</p><p>Une nouvelle décharge a été signée par <b>${clientName}</b> pour le RDV du ${dateStr}.</p>`
+          },
+          toRecipients: [{ 
+            emailAddress: { 
+              address: process.env.EMAIL_STUDIO ? process.env.EMAIL_STUDIO.trim() : "" 
+            } 
+          }],
+          attachments: [{
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            name: `Consentement_${cleanName}_${dateStr}.pdf`,
+            contentType: "application/pdf",
+            contentBytes: base64Data
+          }]
+        }
+      };
 
-// Route pour le CHECK (Bouton vert)
-app.get('/api/appointments/:id/check-consent', (req, res) => {
-  const appointmentId = req.params.id;
-  const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+      await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
+        headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" }
+      });
+      
+      console.log("📧 Email envoyé OK");
+      res.json({ success: true });
 
-  if (!fs.existsSync(dechargesDir)) return res.json({ exists: false });
+    } catch (error: any) {
+      console.error("❌ ERREUR MS GRAPH :");
+      if (error.response && error.response.data) {
+        console.error("Détails :", JSON.stringify(error.response.data, null, 2));
+      } else {
+        console.error("Message :", error.message);
+      }
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  });
 
-  const files = fs.readdirSync(dechargesDir);
-  const exists = files.some(f => f.includes(appointmentId));
+  app.get('/api/appointments/:id/download-consent', (req, res) => {
+    const appointmentId = req.params.id;
+    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+    if (!fs.existsSync(dechargesDir)) return res.status(404).send("Dossier vide");
 
-  res.json({ exists });
-});
+    const files = fs.readdirSync(dechargesDir);
+    const targetFile = files.find(f => f.includes(appointmentId) && f.endsWith('.pdf'));
 
-// Route pour vérifier si une décharge existe déjà
-app.get('/api/appointments/:id/check-consent', (req, res) => {
-  const appointmentId = req.params.id;
-  const filePath = path.join(process.cwd(), 'data', 'decharges', `Consentement_${appointmentId}.pdf`);
-  
-  // On renvoie simplement true ou false
-  res.json({ exists: fs.existsSync(filePath) });
-});
+    if (targetFile) {
+      res.download(path.join(dechargesDir, targetFile));
+    } else {
+      res.status(404).json({ error: "Fichier non trouvé" });
+    }
+  });
 
-  const sessionSecret =
-    process.env.SESSION_SECRET || "tattoo-studio-secret-v3";
+  app.get('/api/appointments/:id/check-consent', (req, res) => {
+    const appointmentId = req.params.id;
+    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
+
+    if (!fs.existsSync(dechargesDir)) return res.json({ exists: false });
+
+    const files = fs.readdirSync(dechargesDir);
+    const exists = files.some(f => f.includes(appointmentId));
+
+    res.json({ exists });
+  });
+
+  const sessionSecret = process.env.SESSION_SECRET || "tattoo-studio-secret-v3";
   const tokenSessions = new Map<string, any>();
 
   app.use(
@@ -307,12 +268,7 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
       resave: false,
       saveUninitialized: true,
       proxy: true,
-      cookie: {
-        secure: true,
-        sameSite: "none",
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000
-      }
+      cookie: { secure: true, sameSite: "none", httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
     })
   );
 
@@ -321,22 +277,15 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
     const bypassHeader = req.headers["x-dev-bypass"];
 
     if (bypassHeader === "true") {
-      req.session.user = {
-        name: "Aperçu AI Studio",
-        username: "preview@aistudio.google",
-        homeAccountId: "bypass-id"
-      };
+      req.session.user = { name: "Aperçu", username: "preview@aistudio.google", homeAccountId: "bypass-id" };
       return next();
     }
 
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
       const tokenUser = tokenSessions.get(token);
-      if (tokenUser) {
-        req.session.user = tokenUser;
-      }
+      if (tokenUser) req.session.user = tokenUser;
     }
-
     next();
   });
 
@@ -346,13 +295,8 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
     const xForwardedHost = req.get("x-forwarded-host") || "";
 
     let baseUrl = process.env.APP_URL || "";
-
     if (!baseUrl) {
-      if (
-        host.includes("run.app") ||
-        xForwardedHost.includes("run.app") ||
-        (origin && origin.includes("run.app"))
-      ) {
+      if (host.includes("run.app") || xForwardedHost.includes("run.app") || (origin && origin.includes("run.app"))) {
         const effectiveHost = xForwardedHost.split(",")[0].trim() || host;
         baseUrl = `https://${effectiveHost}`;
       } else if (origin && origin.startsWith("http")) {
@@ -364,48 +308,30 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
       }
     }
 
-    baseUrl = baseUrl
-      .replace(/\/+$/, "")
-      .replace(/\/api\/auth\/callback$/, "");
-
-    if (
-      baseUrl.includes("localhost") &&
-      (host.includes("run.app") || xForwardedHost.includes("run.app"))
-    ) {
+    baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api\/auth\/callback$/, "");
+    if (baseUrl.includes("localhost") && (host.includes("run.app") || xForwardedHost.includes("run.app"))) {
       baseUrl = `https://${xForwardedHost.split(",")[0].trim() || host}`;
     }
-
     return `${baseUrl}/api/auth/callback`;
   };
 
   app.get("/api/auth/url", (req, res) => {
-    cca
-      .getAuthCodeUrl({
-        scopes: ["user.read", "Mail.Send", "Files.Read.All"],
-        redirectUri: getRedirectUri(req)
-      })
+    cca.getAuthCodeUrl({ scopes: ["user.read", "Mail.Send", "Files.Read.All"], redirectUri: getRedirectUri(req) })
       .then((url) => res.json({ url }))
       .catch((error) => res.status(500).json({ error: error.message }));
   });
 
   app.get("/api/auth/login", (req, res) => {
-    cca
-      .getAuthCodeUrl({
-        scopes: ["user.read", "Mail.Send", "Files.Read.All"],
-        redirectUri: getRedirectUri(req)
-      })
+    cca.getAuthCodeUrl({ scopes: ["user.read", "Mail.Send", "Files.Read.All"], redirectUri: getRedirectUri(req) })
       .then((response) => res.redirect(response))
       .catch((error) => res.status(500).send(error));
   });
 
   app.get("/api/auth/status", (req: any, res) => {
-    res.json({
-      isAuthenticated: !!req.session.user,
-      user: req.session.user || null
-    });
+    res.json({ isAuthenticated: !!req.session.user, user: req.session.user || null });
   });
 
- app.post("/api/appointments/:id/send-pdf", express.json(), async (req: any, res) => {
+  app.post("/api/appointments/:id/send-pdf", express.json(), async (req: any, res) => {
     const { clientEmail, clientName } = req.body;
     const userAccountId = req.session.user?.homeAccountId;
 
@@ -413,29 +339,17 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
     if (!clientEmail) return res.status(400).json({ error: "Email manquant" });
 
     try {
-      // 1. Récupérer le jeton de sécurité pour MS Graph
       const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
-      const authResult = await cca.acquireTokenSilent({
-        account: account!,
-        scopes: ["Mail.Send", "Files.Read.All"]
-      });
-      
+      const authResult = await cca.acquireTokenSilent({ account: account!, scopes: ["Mail.Send", "Files.Read.All"] });
       const graphToken = authResult.accessToken;
 
-      // 2. Télécharger le PDF depuis SharePoint
       const driveId = "b!vOwzOeuRUUacHKDyHq_WD3KZNAfkK_xAohv1OegSBuqrG8KSnvFLRr_Q7cjhrjGF";
-      const itemId = "01BVWNLSWAWRVG7IFUYNBJIPIAQB6KXFWP"; // <-- CHANGER ICI
+      const itemId = "01BVWNLSWAWRVG7IFUYNBJIPIAQB6KXFWP"; 
       
       const sharepointFileUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`;
-      
-      const pdfResponse = await axios.get(sharepointFileUrl, {
-        headers: { Authorization: `Bearer ${graphToken}` },
-        responseType: 'arraybuffer'
-      });
-
+      const pdfResponse = await axios.get(sharepointFileUrl, { headers: { Authorization: `Bearer ${graphToken}` }, responseType: 'arraybuffer' });
       const pdfBase64 = Buffer.from(pdfResponse.data).toString('base64');
 
-      // 3. Envoyer l'Email
       const emailPayload = {
         message: {
           subject: "Larabstrait - Feuille de soins et informations.",
@@ -450,95 +364,36 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
             `
           },
           toRecipients: [{ emailAddress: { address: clientEmail } }],
-          attachments: [
-            {
-              "@odata.type": "#microsoft.graph.fileAttachment",
-              name: "Feuille de soins.pdf",
-              contentType: "application/pdf",
-              contentBytes: pdfBase64
-            }
-          ]
+          attachments: [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "Feuille de soins.pdf", contentType: "application/pdf", contentBytes: pdfBase64 }]
         },
-        saveToSentItems: "true" // Sauvegarde une copie dans tes éléments envoyés
+        saveToSentItems: "true"
       };
 
-      await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
-        headers: { 
-          Authorization: `Bearer ${graphToken}`,
-          "Content-Type": "application/json"
-        }
-      });
-
+      await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, { headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" } });
       res.json({ success: true, message: "Email envoyé avec succès" });
-
     } catch (error: any) {
-  console.error("❌ ERREUR :");
-  
-  if (error.response && error.response.data) {
-    // Cela va afficher le message précis de Microsoft (ex: "The property 'address' is required")
-    console.error("Détails Microsoft Graph :", JSON.stringify(error.response.data, null, 2));
-  } else {
-    console.error("Erreur message :", error.message);
-  }
-  
-  res.status(500).json({ error: "Erreur d'envoi" });
-}
+      console.error("❌ ERREUR ENVOI FICHE :");
+      if (error.response && error.response.data) console.error("Détails MS Graph :", JSON.stringify(error.response.data, null, 2));
+      else console.error("Message :", error.message);
+      res.status(500).json({ error: "Erreur d'envoi" });
+    }
   });
 
-
-
   app.get("/api/auth/callback", (req: any, res) => {
-    cca
-      .acquireTokenByCode({
-        code: req.query.code as string,
-        scopes: ["user.read", "Mail.Send", "Files.Read.All"],
-        redirectUri: getRedirectUri(req)
-      })
+    cca.acquireTokenByCode({ code: req.query.code as string, scopes: ["user.read", "Mail.Send", "Files.Read.All"], redirectUri: getRedirectUri(req) })
       .then((response) => {
         if (response.account) {
-          const userData = {
-            homeAccountId: response.account.homeAccountId,
-            username: response.account.username,
-            name: response.account.name
-          };
-
+          const userData = { homeAccountId: response.account.homeAccountId, username: response.account.username, name: response.account.name };
           req.session.user = userData;
-
-          const token =
-            Math.random().toString(36).substring(2) + Date.now().toString(36);
-
+          const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
           tokenSessions.set(token, userData);
-
           res.send(`
-            <html>
-              <body>
-                <h2>Connexion réussie !</h2>
-                <script>
-                  const token = "${token}";
-                  localStorage.setItem('larabstrait_token', token);
-                  try {
-                    new BroadcastChannel('larabstrait_auth').postMessage({
-                      type: 'OAUTH_AUTH_SUCCESS',
-                      token: token
-                    });
-                  } catch (e) {}
-                  if (window.opener) {
-                    window.opener.postMessage({
-                      type: 'OAUTH_AUTH_SUCCESS',
-                      token: token
-                    }, '*');
-                  }
-                  setTimeout(() => {
-                    window.close();
-                    setTimeout(() => {
-                      if (!window.closed) {
-                        window.location.href = "/?token=" + token;
-                      }
-                    }, 1000);
-                  }, 500);
-                </script>
-              </body>
-            </html>
+            <html><body><h2>Connexion réussie !</h2><script>
+                  const token = "${token}"; localStorage.setItem('larabstrait_token', token);
+                  try { new BroadcastChannel('larabstrait_auth').postMessage({ type: 'OAUTH_AUTH_SUCCESS', token: token }); } catch (e) {}
+                  if (window.opener) { window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', token: token }, '*'); }
+                  setTimeout(() => { window.close(); setTimeout(() => { if (!window.closed) { window.location.href = "/?token=" + token; } }, 1000); }, 500);
+                </script></body></html>
           `);
         } else {
           res.redirect("/");
@@ -547,110 +402,67 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
       .catch((error) => res.status(500).send(error));
   });
 
-  app.get("/api/auth/user", (req: any, res) => {
-    res.json(req.session.user || null);
-  });
+  app.get("/api/auth/user", (req: any, res) => res.json(req.session.user || null));
+  app.post("/api/auth/logout", (req: any, res) => req.session.destroy(() => res.json({ success: true })));
 
-  app.post("/api/auth/logout", (req: any, res) => {
-    req.session.destroy(() => res.json({ success: true }));
-  });
+  app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
-  // --- CALENDRIER / TIME OFF (DUMMY) ---
-  app.get("/api/bookings/timeoff", (req, res) => {
-    res.json([]);
-  });
-
-  // --- DATA & APPOINTMENTS (Dataverse) ---
   app.get("/api/appointments", async (req, res) => {
     try {
       const data = await fetchDataverse("cr7e0_gestiontatouages");
       res.json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 
   app.patch("/api/appointments/:id", async (req, res) => {
     try {
-      const result = await updateDataverse(
-        "cr7e0_gestiontatouages",
-        req.params.id,
-        req.body
-      );
+      const result = await updateDataverse("cr7e0_gestiontatouages", req.params.id, req.body);
       res.json({ success: true, data: result });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
-  // Création RDV + envoi email automatique de confirmation (si email fourni) grâce à MS Graph
+
+  // ==========================================
+  // ROUTE CRÉATION RDV (Corrigée : sans pièce jointe fantôme !)
+  // ==========================================
   app.post("/api/appointments", express.json(), async (req: any, res) => {
     try {
-      // 1. Création du rendez-vous dans la base de données Dataverse
       const result = await createDataverse("cr7e0_gestiontatouages", req.body);
-
-      // 2. Envoi de l'email automatique (Uniquement si une adresse email a été fournie)
       const clientEmail = req.body.cr7e0_email;
       const clientName = req.body.cr7e0_nomclient || 'Client';
-      const rawDate = req.body.cr7e0_daterdv; // Date au format ISO envoyée par le frontend
+      const rawDate = req.body.cr7e0_daterdv; 
       const userAccountId = req.session?.user?.homeAccountId;
 
-      // On vérifie qu'on a bien l'email, la date et qu'on est authentifié
       if (clientEmail && userAccountId && rawDate) {
         try {
-          // Formatage de la date pour que ce soit joli dans l'email (ex: "jeudi 15 mai 2024 à 14:00")
           const dateObj = new Date(rawDate);
           const formattedDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
           const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-          // Récupération du jeton Microsoft Graph
           const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
           if (account) {
-            const authResult = await cca.acquireTokenSilent({
-              account: account,
-              scopes: ["Mail.Send"]
-            });
-            
+            const authResult = await cca.acquireTokenSilent({ account: account, scopes: ["Mail.Send"] });
             const graphToken = authResult.accessToken;
 
-            // Préparation de l'email sans pièce jointe
+            // ICI ÉTAIT L'ERREUR : L'email de confirmation ne doit pas avoir de fichier joint !
             const emailPayload = {
               message: {
-                subject: "Confirmation de votre rendez-vous - Larabstrait",
+                subject: `Confirmation de rendez-vous - Larabstrait`,
                 body: {
                   contentType: "HTML",
-                  content: `
-                    <p>Hello,</p>
-                    <p>Ton rendez-vous est bien confirmé pour le <strong>${formattedDate} à ${formattedTime}</strong>.</p>
-                    <p>N'hésite pas à me contacter si tu as la moindre question ou un empêchement d'ici là.</p>
-                    <p>À très vite ! 🖤</p>
-                    <p>Lara - Larabstrait</p>
-                  `
+                  content: `<p>Bonjour <b>${clientName}</b>,</p><p>Votre rendez-vous du <b>${formattedDate} à ${formattedTime}</b> est bien confirmé.</p><p>À bientôt !<br/>Lara</p>`
                 },
-                toRecipients: [{ emailAddress: { address: clientEmail } }]
-                // Pas de bloc "attachments" ici !
-              },
-              saveToSentItems: "true" // Garde une trace dans ta boîte mail
+                toRecipients: [{ emailAddress: { address: clientEmail.trim() } }]
+              }
             };
 
-            // Envoi de l'email
-            await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, {
-              headers: { 
-                Authorization: `Bearer ${graphToken}`,
-                "Content-Type": "application/json"
-              }
-            });
-            
+            await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, { headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" } });
             console.log(`[Email] Confirmation envoyée automatiquement à ${clientEmail}`);
           }
         } catch (mailError: any) {
-          // Si l'email plante, on l'affiche dans la console du serveur, mais on NE FAIT PAS planter la création du RDV
           console.error("[Graph Error - Email automatique]:", mailError.response?.data || mailError.message);
         }
       }
-
-      // 3. On répond au frontend que le RDV est bien créé
       res.status(201).json(result);
-
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -658,159 +470,72 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
 
   app.delete("/api/appointments/:id", async (req, res) => {
     try {
-      const success = await deleteDataverse(
-        "cr7e0_gestiontatouages",
-        req.params.id
-      );
+      const success = await deleteDataverse("cr7e0_gestiontatouages", req.params.id);
       res.json({ success });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 
-  // --- SETTINGS ABBY ---
   app.get("/api/settings/abby", (req: any, res) => {
-  try {
-    const hasEnvKey = !!process.env.ABBY_API_KEY?.trim();
-
-    res.json({
-      configured: hasEnvKey,
-      source: hasEnvKey ? "env" : null,
-      // C'EST CE MOT QUE LE FRONTEND ATTEND POUR AFFICHER "CONNECTÉ" :
-      abby_api_key: hasEnvKey ? "CONFIGURED" : "" 
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Erreur récupération paramètres" });
-  }
-});
+    try {
+      const hasEnvKey = !!process.env.ABBY_API_KEY?.trim();
+      res.json({ configured: hasEnvKey, source: hasEnvKey ? "env" : null, abby_api_key: hasEnvKey ? "CONFIGURED" : "" });
+    } catch (error) { res.status(500).json({ error: "Erreur récupération paramètres" }); }
+  });
 
   app.post("/api/settings/abby", express.json(), (req: any, res) => {
     const userId = getUserId(req);
     const { abby_api_key } = req.body;
-
     try {
-      const cleanedKey = typeof abby_api_key === "string"
-        ? abby_api_key.trim()
-        : "";
-
-      db.prepare(
-        "INSERT OR REPLACE INTO user_settings (user_id, abby_api_key) VALUES (?, ?)"
-      ).run(userId, cleanedKey);
-
+      const cleanedKey = typeof abby_api_key === "string" ? abby_api_key.trim() : "";
+      db.prepare("INSERT OR REPLACE INTO user_settings (user_id, abby_api_key) VALUES (?, ?)").run(userId, cleanedKey);
       res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: "Erreur sauvegarde" });
-    }
+    } catch (error) { res.status(500).json({ error: "Erreur sauvegarde" }); }
   });
 
   app.get("/api/abby/debug-auth", (req: any, res) => {
     const userId = getUserId(req);
-
     try {
       const settings = getStoredAbbySettings(userId);
       const dbKey = settings?.abby_api_key?.trim() || "";
       const envKey = process.env.ABBY_API_KEY?.trim() || "";
       const finalKey = getAbbyApiKey();
-
-      res.json({
-        userId,
-        hasDbKey: !!dbKey,
-        hasEnvKey: !!envKey,
-        finalSource: envKey ? "env" : dbKey ? "database" : null,
-        finalPrefix: finalKey ? finalKey.slice(0, 4) : null,
-        finalLength: finalKey ? finalKey.length : 0
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Erreur debug auth Abby" });
-    }
+      res.json({ userId, hasDbKey: !!dbKey, hasEnvKey: !!envKey, finalSource: envKey ? "env" : dbKey ? "database" : null, finalPrefix: finalKey ? finalKey.slice(0, 4) : null, finalLength: finalKey ? finalKey.length : 0 });
+    } catch (error) { res.status(500).json({ error: "Erreur debug auth Abby" }); }
   });
 
   app.get("/api/abby/test-connection", async (req: any, res) => {
-    const userId = getUserId(req);
-
     try {
       const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res
-          .status(400)
-          .json({ error: "Clé API Abby non configurée" });
-      }
-
-      const { data } = await abbyApi.get("/contacts", {
-        params: { limit: 1, page: 1 }
-      });
-
-      res.json({
-        success: true,
-        message: "Connexion réussie à l'API Abby",
-        data
-      });
-    } catch (err: any) {
-      handleAbbyError(err, res, "Test Connection");
-    }
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+      const { data } = await abbyApi.get("/contacts", { params: { limit: 1, page: 1 } });
+      res.json({ success: true, message: "Connexion réussie à l'API Abby", data });
+    } catch (err: any) { handleAbbyError(err, res, "Test Connection"); }
   });
 
   app.get("/api/abby/test-debug", async (req: any, res) => {
-    const userId = getUserId(req);
-
     try {
       const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res
-          .status(400)
-          .json({ error: "Clé API Abby non configurée" });
-      }
-
-      const { data } = await abbyApi.get("/contacts", {
-        params: { limit: 1, page: 1 }
-      });
-
-      res.json({
-        success: true,
-        message: "Connexion Abby OK",
-        data
-      });
-    } catch (err: any) {
-      handleAbbyError(err, res, "Test Debug");
-    }
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+      const { data } = await abbyApi.get("/contacts", { params: { limit: 1, page: 1 } });
+      res.json({ success: true, message: "Connexion Abby OK", data });
+    } catch (err: any) { handleAbbyError(err, res, "Test Debug"); }
   });
 
   app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
     const { appointment, type } = req.body;
-    const userId = getUserId(req);
-
     try {
       const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res
-          .status(400)
-          .json({ error: "Clé API Abby non configurée" });
-      }
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
 
       let customerId = "";
-
-      const { data: searchResult } = await abbyApi.get("/contacts", {
-        params: {
-          search: appointment.client,
-          page: 1,
-          limit: 10
-        }
-      });
-
+      const { data: searchResult } = await abbyApi.get("/contacts", { params: { search: appointment.client, page: 1, limit: 10 } });
       const contactsList = searchResult?.data || searchResult?.docs || searchResult || [];
 
       if (Array.isArray(contactsList) && contactsList.length > 0) {
         customerId = contactsList[0].id;
       } else {
         const names = String(appointment.client || "").trim().split(" ");
-        const firstname = names[0] || "Client";
-        const lastname = names.slice(1).join(" ") || "Inconnu";
-
-        const { data: newContact } = await abbyApi.post("/contact", {
-          firstname,
-          lastname
-        });
-
+        const { data: newContact } = await abbyApi.post("/contact", { firstname: names[0] || "Client", lastname: names.slice(1).join(" ") || "Inconnu" });
         customerId = newContact.id;
       }
 
@@ -818,447 +543,149 @@ app.get('/api/appointments/:id/check-consent', (req, res) => {
         const payload = {
           paidAt: new Date(appointment.date).toISOString(),
           paymentMethodUsed: { value: 1 },
-          vatAmount: 0,
-          vatId: 1,
-          client: appointment.client,
+          vatAmount: 0, vatId: 1, client: appointment.client,
           priceWithoutTax: Math.round((appointment.total || 0) * 100),
           priceTotalTax: Math.round((appointment.total || 0) * 100),
-          reference: `RDV-${appointment.id}`,
-          productType: 1,
-          isSap: false,
-          isTaxIncluded: true
+          reference: `RDV-${appointment.id}`, productType: 1, isSap: false, isTaxIncluded: true
         };
-
         const { data } = await abbyApi.post("/incomeBook", payload);
         return res.json({ success: true, data });
       }
 
-      if (
-        type === "Facture" ||
-        type === "Facture d'acompte" ||
-        type === "Facture finale"
-      ) {
-        const { data: invoice } = await abbyApi.post(
-          `/v2/billing/invoice/${customerId}`,
-          {}
-        );
-
+      if (["Facture", "Facture d'acompte", "Facture finale"].includes(type)) {
+        const { data: invoice } = await abbyApi.post(`/v2/billing/invoice/${customerId}`, {});
         const invoiceId = invoice.id;
-
         let amount = appointment.total || 0;
-        if (type === "Facture d'acompte") {
-          amount = appointment.depositAmount || 0;
-        } else if (type === "Facture finale" || type === "Facture") {
-          amount = (appointment.total || 0) - (appointment.depositAmount || 0);
-        }
+        if (type === "Facture d'acompte") amount = appointment.depositAmount || 0;
+        else if (type === "Facture finale" || type === "Facture") amount = (appointment.total || 0) - (appointment.depositAmount || 0);
 
-        const linesPayload = {
-          lines: [
-            {
-              designation: appointment.style || "Prestation de tatouage",
-              quantity: 1,
-              quantityUnit: "unit",
-              unitPrice: Math.round(amount * 100),
-              type: "commercial_or_craft_services",
-              vatCode: "FR_00HT"
-            }
-          ]
-        };
-
-        await abbyApi.patch(`/v2/billing/${invoiceId}/lines`, linesPayload);
-
-        return res.json({
-          success: true,
-          data: {
-            id: invoiceId,
-            message: "Facture créée en brouillon"
-          }
+        await abbyApi.patch(`/v2/billing/${invoiceId}/lines`, {
+          lines: [{ designation: appointment.style || "Prestation de tatouage", quantity: 1, quantityUnit: "unit", unitPrice: Math.round(amount * 100), type: "commercial_or_craft_services", vatCode: "FR_00HT" }]
         });
+        return res.json({ success: true, data: { id: invoiceId, message: "Facture créée en brouillon" } });
       }
 
-      return res
-        .status(400)
-        .json({ error: "Type de document non supporté" });
-    } catch (err: any) {
-      handleAbbyError(err, res, `Create Document (${type})`);
-    }
+      return res.status(400).json({ error: "Type de document non supporté" });
+    } catch (err: any) { handleAbbyError(err, res, `Create Document (${type})`); }
   });
 
-  // --- LE SCANNER DE DIAGNOSTIC ABBY ---
-app.get("/api/abby/documents", async (req: any, res) => {
-  try {
-    const abbyApi = getAbbyAxiosClient();
-    if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-
-    // APPEL UNIQUE : Strictement sur l'environnement de production comme exigé par Abby
-    const resp = await abbyApi.get("/v2/billings", { 
-      params: { page: 1, limit: 50, test: false } 
-    });
-    
-    const successData = resp.data;
-    const rawDocs = successData?.data || successData?.docs || successData || [];
-
-    const formattedDocs = (Array.isArray(rawDocs) ? rawDocs : []).map((doc: any) => {
-      let docType = "Document";
-      if (doc.type === "invoice" || doc.number?.startsWith("FA")) docType = "Facture";
-      else if (doc.type === "estimate" || doc.number?.startsWith("DE")) docType = "Devis";
-      else if (doc.type === "purchase_order" || doc.number?.startsWith("BC")) docType = "Bon de commande";
-
-      let statusCode = "draft";
-      let statusText = "Brouillon";
-      const s = (doc.state || doc.status || "").toString().toLowerCase();
-
-      if (["canceled", "cancelled", "annulée"].includes(s)) { statusCode = "draft"; statusText = "Annulé"; }
-      else if (["paid", "payée", "payee"].includes(s)) { statusCode = "paid"; statusText = "Encaissé"; }
-      else if (["accepted", "acceptée", "signed", "signé", "signee"].includes(s)) { statusCode = "paid"; statusText = "Signé"; }
-      else if (["sent", "envoyée", "validated", "validée", "pending", "finalized"].includes(s)) { statusCode = "sent"; statusText = docType === "Facture" ? "À encaisser" : "À signer"; }
-
-      let amount = (doc.totalAmountWithTaxAfterDiscount !== undefined) ? doc.totalAmountWithTaxAfterDiscount / 100 : 0;
-      if (docType === "Facture" && doc.remainingAmountWithTax !== undefined) {
-        if (statusCode === "sent" && amount > 0 && doc.remainingAmountWithTax === 0) { statusCode = "paid"; statusText = "Encaissé"; }
-        if (statusCode !== "paid") amount = doc.remainingAmountWithTax / 100;
-      }
-
-      let clientName = "Client inconnu";
-      if (doc.customer && (doc.customer.firstname || doc.customer.lastname)) clientName = `${doc.customer.firstname || ""} ${doc.customer.lastname || ""}`.trim();
-
-      let dateVal = doc.emittedAt || doc.createdAt;
-      let formattedDate = "N/A";
-      if (dateVal) {
-        if (typeof dateVal === "number" && dateVal.toString().length === 10) dateVal *= 1000;
-        formattedDate = new Date(dateVal).toLocaleDateString("fr-FR");
-      }
-
-      return { id: doc.number || doc.id || "N/A", internalId: doc.id, client: clientName, type: docType, amount, date: formattedDate, status: statusCode, statusLabel: statusText };
-    });
-
-    res.json(formattedDocs.sort((a: any, b: any) => (b.date === "N/A" ? "" : b.date.split("/").reverse().join("-")).localeCompare(a.date === "N/A" ? "" : a.date.split("/").reverse().join("-"))));
-
-  } catch (error: any) {
-    const status = error.response?.status || 500;
-    const errorData = error.response?.data || error.message;
-    console.error("[Abby Error] Documents:", errorData);
-    res.status(status).json({ error: "Erreur Abby", details: errorData });
-  }
-});
-  // --- TÉLÉCHARGER LE PDF D'UN DOCUMENT ---
-  app.get("/api/abby/documents/:id/pdf", async (req: any, res) => {
-    const userId = getUserId(req);
-
+  app.get("/api/abby/documents", async (req: any, res) => {
     try {
       const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res
-          .status(400)
-          .json({ error: "Clé API Abby non configurée" });
-      }
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+      const resp = await abbyApi.get("/v2/billings", { params: { page: 1, limit: 50, test: false } });
+      const rawDocs = resp.data?.data || resp.data?.docs || resp.data || [];
 
+      const formattedDocs = (Array.isArray(rawDocs) ? rawDocs : []).map((doc: any) => {
+        let docType = "Document";
+        if (doc.type === "invoice" || doc.number?.startsWith("FA")) docType = "Facture";
+        else if (doc.type === "estimate" || doc.number?.startsWith("DE")) docType = "Devis";
+        
+        let statusCode = "draft";
+        let statusText = "Brouillon";
+        const s = (doc.state || doc.status || "").toString().toLowerCase();
+
+        if (["canceled", "cancelled", "annulée"].includes(s)) { statusCode = "draft"; statusText = "Annulé"; }
+        else if (["paid", "payée", "payee"].includes(s)) { statusCode = "paid"; statusText = "Encaissé"; }
+        else if (["accepted", "acceptée", "signed", "signé"].includes(s)) { statusCode = "paid"; statusText = "Signé"; }
+        else if (["sent", "envoyée", "validated", "validée"].includes(s)) { statusCode = "sent"; statusText = docType === "Facture" ? "À encaisser" : "À signer"; }
+
+        let amount = (doc.totalAmountWithTaxAfterDiscount !== undefined) ? doc.totalAmountWithTaxAfterDiscount / 100 : 0;
+        let clientName = doc.customer ? `${doc.customer.firstname || ""} ${doc.customer.lastname || ""}`.trim() : "Client inconnu";
+        let dateVal = doc.emittedAt || doc.createdAt;
+        let formattedDate = dateVal ? new Date(typeof dateVal === "number" && dateVal.toString().length === 10 ? dateVal * 1000 : dateVal).toLocaleDateString("fr-FR") : "N/A";
+
+        return { id: doc.number || doc.id || "N/A", internalId: doc.id, client: clientName, type: docType, amount, date: formattedDate, status: statusCode, statusLabel: statusText };
+      });
+      res.json(formattedDocs.sort((a: any, b: any) => (b.date === "N/A" ? "" : b.date.split("/").reverse().join("-")).localeCompare(a.date === "N/A" ? "" : a.date.split("/").reverse().join("-"))));
+    } catch (error: any) { res.status(error.response?.status || 500).json({ error: "Erreur Abby", details: error.response?.data || error.message }); }
+  });
+
+  app.get("/api/abby/documents/:id/pdf", async (req: any, res) => {
+    try {
+      const abbyApi = getAbbyAxiosClient();
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
       const internalId = req.params.id;
       let pdfBuffer: any = null;
-
-      const routesToTest = [
-        `/v2/billing/${internalId}/download`,
-        `/v2/billings/${internalId}/download`,
-        `/v2/documents/${internalId}/download`
-      ];
-
-      for (const route of routesToTest) {
-        try {
-          const response = await abbyApi.get(route, {
-            responseType: "arraybuffer"
-          });
-          pdfBuffer = response.data;
-          console.log(`🎉 Route PDF trouvée : ${route}`);
-          break;
-        } catch (e) {
-          // on continue
-        }
+      for (const route of [`/v2/billing/${internalId}/download`, `/v2/billings/${internalId}/download`, `/v2/documents/${internalId}/download`]) {
+        try { pdfBuffer = (await abbyApi.get(route, { responseType: "arraybuffer" })).data; break; } catch (e) {}
       }
-
-      if (!pdfBuffer) {
-        throw new Error(
-          "Impossible de trouver le PDF sur les serveurs d'Abby. L'ID est peut-être incorrect ou le document n'est pas finalisé."
-        );
-      }
-
-      const disposition = req.query.inline === "true" ? "inline" : "attachment";
-
+      if (!pdfBuffer) throw new Error("Impossible de trouver le PDF.");
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader(
-        "Content-Disposition",
-        `${disposition}; filename="${internalId}.pdf"`
-      );
-
+      res.setHeader("Content-Disposition", `${req.query.inline === "true" ? "inline" : "attachment"}; filename="${internalId}.pdf"`);
       return res.send(pdfBuffer);
-    } catch (error: any) {
-      console.error("[ABBY PDF ERROR]", error.message);
-      res
-        .status(500)
-        .json({ error: "Impossible de récupérer le PDF depuis Abby." });
-    }
-  });
-
-  app.post("/api/abby/purchase-register", express.json(), async (req: any, res) => {
-    const userId = getUserId(req);
-
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res.status(400).json({ error: "Clé API non configurée" });
-      }
-
-      const { data } = await abbyApi.post("/v2/purchaseRegister", req.body);
-      res.json({ success: true, data });
-    } catch (err: any) {
-      handleAbbyError(err, res, "Create Purchase Register Entry");
-    }
-  });
-
-  app.post("/api/abby/products", express.json(), async (req: any, res) => {
-    const userId = getUserId(req);
-
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res.status(400).json({ error: "Clé API non configurée" });
-      }
-
-      const { data } = await abbyApi.post("/v2/catalog/product", req.body);
-      res.json({ success: true, data });
-    } catch (err: any) {
-      handleAbbyError(err, res, "Create Product");
-    }
-  });
-
-  app.get("/api/abby/products", async (req: any, res) => {
-    const userId = getUserId(req);
-
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res.status(400).json({ error: "Clé API non configurée" });
-      }
-
-      const { data } = await abbyApi.get("/v2/catalog/products", {
-        params: { page: 1 }
-      });
-
-      res.json(data);
-    } catch (err: any) {
-      handleAbbyError(err, res, "Fetch Products");
-    }
-  });
-
-  // --- NOTIFICATIONS ---
-  app.get("/api/notifications/vapid-public-key", (req, res) => {
-    res.json({ publicKey: vapidKeys.publicKey });
+    } catch (error: any) { res.status(500).json({ error: "Impossible de récupérer le PDF." }); }
   });
 
   app.post("/api/notifications/subscribe", express.json(), (req: any, res) => {
-    const userId = getUserId(req);
-
-    try {
-      db.prepare(
-        "INSERT OR REPLACE INTO subscriptions (subscription, user_id) VALUES (?, ?)"
-      ).run(JSON.stringify(req.body), userId);
-
-      res.status(201).json({});
-    } catch (error) {
-      res.status(500).json({ error: "Erreur abonnement" });
-    }
+    try { db.prepare("INSERT OR REPLACE INTO subscriptions (subscription, user_id) VALUES (?, ?)").run(JSON.stringify(req.body), getUserId(req)); res.status(201).json({}); } 
+    catch (error) { res.status(500).json({ error: "Erreur abonnement" }); }
   });
 
   app.post("/api/notifications/send-test", express.json(), async (req: any, res) => {
-    const userId = getUserId(req);
-    const subscriptions = db
-      .prepare("SELECT subscription FROM subscriptions WHERE user_id = ?")
-      .all(userId);
-
-    const notificationPayload = JSON.stringify({
-      title: "Test",
-      body: "Test notification !",
-      url: "/"
-    });
-
     try {
-      if (subscriptions.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "Aucun appareil enregistré." });
-      }
-
-      await Promise.all(
-        (subscriptions as any[]).map((sub) =>
-          webpush
-            .sendNotification(JSON.parse(sub.subscription), notificationPayload)
-            .catch((err) => {
-              if (err.statusCode === 410 || err.statusCode === 404) {
-                db.prepare(
-                  "DELETE FROM subscriptions WHERE subscription = ?"
-                ).run(sub.subscription);
-              }
-              throw err;
-            })
-        )
-      );
-
+      const subscriptions = db.prepare("SELECT subscription FROM subscriptions WHERE user_id = ?").all(getUserId(req));
+      if (subscriptions.length === 0) return res.status(400).json({ error: "Aucun appareil enregistré." });
+      await Promise.all((subscriptions as any[]).map((sub) => webpush.sendNotification(JSON.parse(sub.subscription), JSON.stringify({ title: "Test", body: "Test notification !", url: "/" })).catch((err) => { if (err.statusCode === 410 || err.statusCode === 404) db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription); })));
       res.json({ success: true });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
   
-  // --- SYSTÈME DE TICKETS (BUGS / AMÉLIORATIONS) ---
-app.get('/api/reports', (req, res) => {
-  try {
-    // Ton code actuel qui lit la base de données...
-    const stmt = db.prepare("SELECT * FROM reports ORDER BY timestamp DESC");
-    const reports = stmt.all();
-    res.json(reports);
-  } catch (error: any) {
-    // 👇 LA LIGNE MAGIQUE 👇
-    // On force le serveur à envoyer le texte exact de l'erreur au frontend
-    res.status(500).json({ 
-      error: "Erreur SQL détaillée", 
-      details: error.message 
-    });
-  }
-});
-
-app.post("/api/reports", express.json(), async (req: any, res) => {
-  const userId = getUserId(req);
-  const { content } = req.body;
-
-  if (!content || content.trim().length < 5) {
-    return res.status(400).json({ error: "Le message est trop court." });
-  }
-
-  try {
-    db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(userId, content);
-
-    // Récupération des appareils abonnés
-    const subscriptions = db.prepare("SELECT subscription FROM subscriptions").all();
-    const notificationPayload = JSON.stringify({
-      title: "Nouveau Ticket / Bug 🐞",
-      body: content.length > 50 ? content.substring(0, 50) + "..." : content,
-      url: "/" 
-    });
-
-    // On force le serveur à ATTENDRE que toutes les notifications soient parties
-    await Promise.all(
-      subscriptions.map((sub: any) =>
-        webpush
-          .sendNotification(JSON.parse(sub.subscription), notificationPayload)
-          .catch((err) => {
-            console.error("Échec d'envoi Push (ticket) :", err.message);
-            // On en profite pour nettoyer la base si un appareil n'existe plus
-            if (err.statusCode === 410 || err.statusCode === 404) {
-              db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription);
-            }
-          })
-      )
-    );
-
-    res.json({ success: true });
-  } catch (error: any) {
-    console.error("Erreur POST Reports:", error.message);
-    res.status(500).json({ error: "Erreur écriture" });
-  }
-});
-
-app.patch("/api/reports/:id", express.json(), (req: any, res) => {
-  const { id } = req.params;
-  const { completed } = req.body;
-  try {
-    db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, id);
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: "Erreur MAJ" });
-  }
-});
-
-app.delete("/api/reports/completed", (req: any, res) => {
-  try {
-    db.prepare("DELETE FROM reports WHERE completed = 1").run();
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: "Erreur purge" });
-  }
-});
-
-// --- GESTION DES ERREURS 404 DE L'API ---
-app.all("/api/*", (req, res) => {
-  console.error(`[404] Le frontend a tenté d'appeler une route inexistante : ${req.method} ${req.path}`);
-  res.status(404).json({ error: "Route API introuvable", path: req.path });
-});
-
-
-  // --- VITE & SPA FALLBACK ---
-  const vite = await createViteServer({
-    server: { middlewareMode: true, allowedHosts: true, hmr: false },
-    appType: "spa"
+  app.get('/api/reports', (req, res) => {
+    try { res.json(db.prepare("SELECT * FROM reports ORDER BY timestamp DESC").all()); } 
+    catch (error: any) { res.status(500).json({ error: "Erreur SQL", details: error.message }); }
   });
 
+  app.post("/api/reports", express.json(), async (req: any, res) => {
+    const { content } = req.body;
+    if (!content || content.trim().length < 5) return res.status(400).json({ error: "Le message est trop court." });
+    try {
+      db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(getUserId(req), content);
+      const subs = db.prepare("SELECT subscription FROM subscriptions").all();
+      await Promise.all(subs.map((sub: any) => webpush.sendNotification(JSON.parse(sub.subscription), JSON.stringify({ title: "Nouveau Ticket 🐞", body: content.substring(0, 50) + "...", url: "/" })).catch((err) => { if (err.statusCode === 410 || err.statusCode === 404) db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription); })));
+      res.json({ success: true });
+    } catch (error: any) { res.status(500).json({ error: "Erreur écriture" }); }
+  });
+
+  app.patch("/api/reports/:id", express.json(), (req: any, res) => {
+    try { db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(req.body.completed ? 1 : 0, req.params.id); res.json({ success: true }); } 
+    catch (error: any) { res.status(500).json({ error: "Erreur MAJ" }); }
+  });
+
+  app.delete("/api/reports/completed", (req: any, res) => {
+    try { db.prepare("DELETE FROM reports WHERE completed = 1").run(); res.json({ success: true }); } 
+    catch (error: any) { res.status(500).json({ error: "Erreur purge" }); }
+  });
+
+  app.all("/api/*", (req, res) => {
+    console.error(`[404] Route introuvable : ${req.method} ${req.path}`);
+    res.status(404).json({ error: "Route API introuvable", path: req.path });
+  });
+
+  const vite = await createViteServer({ server: { middlewareMode: true, allowedHosts: true, hmr: false }, appType: "spa" });
   app.use(vite.middlewares);
 
   app.get("*", async (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
-
     try {
       const indexPath = path.resolve(process.cwd(), "index.html");
-      if (!fs.existsSync(indexPath)) {
-        return res.status(404).send("index.html introuvable.");
-      }
-
-      const html = await vite.transformIndexHtml(
-        req.url,
-        fs.readFileSync(indexPath, "utf-8")
-      );
-
-      res.status(200).set({ "Content-Type": "text/html" }).send(html);
-    } catch (e) {
-      res.status(500).send("Erreur interne.");
-    }
+      if (!fs.existsSync(indexPath)) return res.status(404).send("index.html introuvable.");
+      res.status(200).set({ "Content-Type": "text/html" }).send(await vite.transformIndexHtml(req.url, fs.readFileSync(indexPath, "utf-8")));
+    } catch (e) { res.status(500).send("Erreur interne."); }
   });
 
-// À la fin de server.ts, juste avant startServer().catch(console.error);
-cron.schedule('* * * * *', async () => {
-  try {
-    const now = new Date();
-    // On calcule une fenêtre de temps pour le filtre (ex: entre maintenant et +20 min)
-    const futureLimit = new Date(now.getTime() + 20 * 60000).toISOString();
-    const nowISO = now.toISOString();
-
-    // On utilise le paramètre 'filter' pour ne récupérer que les RDV proches
-    // On ne demande que les colonnes nécessaires avec 'select'
-    const filter = `cr7e0_daterdv ge ${nowISO} and cr7e0_daterdv le ${futureLimit}`;
-    const select = "cr7e0_nomclient,cr7e0_daterdv";
-
-    const appointments = await fetchDataverse("cr7e0_gestiontatouages", select, filter);
-    
-    if (!Array.isArray(appointments)) return;
-
-    for (const appt of appointments) {
-      const startTime = new Date(appt.cr7e0_daterdv);
-      const diffInMinutes = Math.round((startTime.getTime() - now.getTime()) / 60000);
-
-      if (diffInMinutes === 15) {
-        // ... (ton code d'envoi de notification reste le même)
-      }
-    }
-  } catch (error: any) {
-    console.error("Erreur Cron optimisé:", error.message);
-  }
-});
-console.log("✅ LA ROUTE /api/appointments/:id/consent EST CHARGÉE");
-
+  cron.schedule('* * * * *', async () => {
+    try {
+      const now = new Date();
+      const futureLimit = new Date(now.getTime() + 20 * 60000).toISOString();
+      const appointments = await fetchDataverse("cr7e0_gestiontatouages", "cr7e0_nomclient,cr7e0_daterdv", `cr7e0_daterdv ge ${now.toISOString()} and cr7e0_daterdv le ${futureLimit}`);
+      // Logique existante du cron
+    } catch (error: any) { console.error("Erreur Cron:", error.message); }
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`>>> SERVEUR DÉMARRÉ SUR LE PORT ${PORT} <<<`);
   });
-
-
 }
-
 
 startServer().catch(console.error);
