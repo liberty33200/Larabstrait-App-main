@@ -575,6 +575,7 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [consentExists, setConsentExists] = useState(false);
+  const [justSigned, setJustSigned] = useState(false);
   const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [showConsentForm, setShowConsentForm] = useState(false);
 
@@ -784,17 +785,30 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
             </label>
 
             {/* BOUTON DYNAMIQUE SIGNATURE */}
-            <button
+            <motion.button
+              // Petite animation au clic (si pas encore signé)
+              whileTap={!consentExists ? { scale: 0.95 } : {}}
+              // L'animation "Pop" quand ça vient d'être signé
+              animate={justSigned ? { scale: [1, 1.05, 1], transition: { duration: 0.4 } } : {}}
+              
               onClick={() => !consentExists && setShowConsentForm(true)}
               disabled={consentExists}
               className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl font-bold transition-all mb-3 ${
-                consentExists 
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                  : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                justSigned
+                  ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/50' // Style Flashy au succès
+                  : consentExists 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-not-allowed opacity-100' // Style grisé/validé
+                    : 'bg-zinc-800 text-white hover:bg-zinc-700' // Style par défaut
               }`}
             >
-              <span>{consentExists ? "✅ Déjà enregistré" : "📝 Signer fiche de consentement"}</span>
-            </button>
+              <span>
+                {justSigned 
+                  ? "🎉 Décharge enregistrée !" 
+                  : consentExists 
+                    ? "✅ Déjà enregistré" 
+                    : "📝 Faire signer la décharge"}
+              </span>
+            </motion.button>
 
             {/* BOUTON TELECHARGEMENT */}
             <button
@@ -818,40 +832,53 @@ const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any)
             </button>
 
             {showConsentForm && (
-              <ConsentFormView 
-                clientName={appointment.client || "Client"} 
-                onClose={() => setShowConsentForm(false)}
-                onSave={async (signatureData, answers) => {
-                  try {
-                    const doc = new jsPDF();
-                    doc.text("CONSENTEMENT ÉCLAIRÉ", 105, 20, { align: "center" });
-                    doc.text(`Client : ${appointment.client}`, 20, 40);
-                    if (signatureData) doc.addImage(signatureData, 'PNG', 20, 60, 50, 25);
-                    
-                    const pdfBase64 = doc.output('datauristring');
+  <ConsentFormView 
+  
+    clientName={appointment.client || "Client"} 
+    onClose={() => setShowConsentForm(false)}
+    onSave={async (signatureData, answers) => {
+      try {
+        const doc = new jsPDF();
+        doc.text("CONSENTEMENT ÉCLAIRÉ", 105, 20, { align: "center" });
+        doc.text(`Client : ${appointment.client}`, 20, 40);
+        if (signatureData) doc.addImage(signatureData, 'PNG', 20, 60, 50, 25);
+        
+        const pdfBase64 = doc.output('datauristring');
 
-                    const response = await fetch(`/api/appointments/${appointment.id}/consent`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ 
-                        pdfData: pdfBase64, 
-                        clientName: appointment.client,
-                        // On s'assure que la date est envoyée sans caractères invisibles bizarres
-                        appointmentDate: String(appointment.date).trim() 
-                      })
-                    });
+        const response = await fetch(`/api/appointments/${appointment.id}/consent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            pdfData: pdfBase64, 
+            clientName: appointment.client,
+            appointmentDate: String(appointment.date).trim() 
+          })
+        });
 
-                    if (response.ok) {
-                      alert("Décharge enregistrée !");
-                      setConsentExists(true);
-                      setShowConsentForm(false);
-                    }
-                  } catch (err) {
-                    alert("Erreur lors de l'enregistrement");
-                  }
-                }}
-              />
-            )}
+        // Si le serveur renvoie une erreur (ex: erreur 500 pour le mail), on déclenche le catch
+        if (!response.ok) {
+          throw new Error("Erreur lors de l'envoi au serveur");
+        }
+
+        // On met à jour l'état du composant parent
+        setConsentExists(true);
+        
+        // On prépare l'animation du bouton parent (en arrière-plan)
+        setJustSigned(true);
+        setTimeout(() => setJustSigned(false), 3000);
+
+        // ⚠️ SUPPRESSION ICI : On ne fait plus de setShowConsentForm(false) 
+        // C'est ConsentFormView qui va appeler onClose() après son animation.
+
+      } catch (err) {
+        console.error(err);
+        alert("Erreur lors de l'enregistrement");
+        // ⚠️ AJOUT CRUCIAL : On relance l'erreur pour que le bouton de ConsentFormView repasse à la normale
+        throw err; 
+      }
+    }}
+  />
+)}
           </div>
 
           <div className="glass-card p-6 bg-rose-500/5 border border-rose-500/10">

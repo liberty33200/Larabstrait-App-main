@@ -1,16 +1,21 @@
 import React, { useState, useRef } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
-import { ShieldAlert, X, Eraser, Check, SmartphoneNfc } from 'lucide-react';
+import { ShieldAlert, X, Eraser, Check, SmartphoneNfc, RefreshCw } from 'lucide-react';
+import { motion } from 'motion/react';
 
 interface ConsentFormViewProps {
   clientName?: string;
   onClose: () => void;
-  onSave: (signatureDataUrl: string, formData: any) => void;
+  // On précise à TypeScript que onSave peut être une promesse (async)
+  onSave: (signatureDataUrl: string, formData: any) => Promise<void> | void; 
 }
 
 export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "Client", onClose, onSave }) => {
   const sigCanvas = useRef<any>(null);
   const [isLuEtApprouve, setIsLuEtApprouve] = useState(false);
+  
+  // NOUVEAU : L'état qui gère l'animation du bouton
+  const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle');
 
   const [medicalAnswers, setMedicalAnswers] = useState({
     enceinte: false,
@@ -25,7 +30,8 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
     sigCanvas.current?.clear();
   };
 
-  const handleSave = () => {
+  // NOUVEAU : handleSave devient asynchrone pour attendre le serveur
+  const handleSave = async () => {
     if (sigCanvas.current?.isEmpty()) {
       alert("Veuillez signer dans l'encadré avant de valider.");
       return;
@@ -35,16 +41,31 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
       return;
     }
     
-    const signatureData = sigCanvas.current.getCanvas().toDataURL('image/png');
-    onSave(signatureData, medicalAnswers);
+    setStatus('saving'); // Le bouton passe en mode chargement
+    
+    try {
+      const signatureData = sigCanvas.current.getCanvas().toDataURL('image/png');
+      
+      // On attend que App.tsx génère le PDF et l'envoie au NAS/Serveur
+      await onSave(signatureData, medicalAnswers);
+      
+      // Si on arrive ici, pas d'erreur (pas de throw catch)
+      setStatus('success');
+      
+      // On attend 1.5 seconde pour voir l'animation, puis on ferme le formulaire
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+      
+    } catch (error) {
+      // Si une erreur remonte de App.tsx, on remet le bouton à zéro
+      setStatus('idle');
+    }
   };
 
   return (
     <>
-      {/* ÉCRAN DE BLOCAGE PAYSAGE (Uniquement pour écrans tactiles)
-        L'astuce est ici : [@media(pointer:coarse)_and_(orientation:landscape)]
-        Ça cible les écrans tactiles (pointer:coarse) qui sont à l'horizontale.
-      */}
+      {/* ÉCRAN DE BLOCAGE PAYSAGE */}
       <div className="fixed inset-0 z-[10000] bg-zinc-950 flex-col items-center justify-center text-center p-8 hidden [@media(pointer:coarse)_and_(orientation:landscape)]:flex">
         <SmartphoneNfc size={64} className="text-lilas mb-6 animate-pulse" />
         <h2 className="text-3xl font-bold text-white mb-4">Veuillez tourner l'appareil</h2>
@@ -53,9 +74,7 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
         </p>
       </div>
 
-      {/* FENÊTRE PRINCIPALE
-        Elle se cache UNIQUEMENT sur les écrans tactiles en mode paysage.
-      */}
+      {/* FENÊTRE PRINCIPALE */}
       <div className="fixed inset-0 z-[9999] bg-zinc-950 overflow-y-auto flex flex-col items-center justify-start p-4 md:p-8 [@media(pointer:coarse)_and_(orientation:landscape)]:hidden">
         
         <div className="w-full max-w-2xl bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 p-6 md:p-10 relative shrink-0 my-auto">
@@ -123,7 +142,7 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
 
             <div className="mb-2 flex justify-between items-end">
               <span className="text-zinc-400 text-sm font-medium">Signature :</span>
-              <button onClick={clearSignature} className="text-sm flex items-center space-x-1 text-zinc-400 hover:text-red-400 transition p-1">
+              <button onClick={clearSignature} disabled={status !== 'idle'} className="text-sm flex items-center space-x-1 text-zinc-400 hover:text-red-400 transition p-1 disabled:opacity-50 disabled:cursor-not-allowed">
                 <Eraser size={16} /> <span>Effacer</span>
               </button>
             </div>
@@ -139,18 +158,38 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
             </div>
           </div>
 
-          <button 
+          {/* NOUVEAU : Bouton Animé */}
+          <motion.button
+            animate={status === 'success' ? { scale: [1, 1.05, 1], transition: { duration: 0.4 } } : {}}
             onClick={handleSave}
-            disabled={!isLuEtApprouve}
-            className={`w-full py-4 rounded-xl flex justify-center items-center space-x-2 font-bold text-lg transition-all ${
-              isLuEtApprouve 
-                ? 'bg-lilas text-white hover:bg-lilas/80 shadow-[0_0_20px_rgba(168,85,247,0.3)]' 
-                : 'bg-zinc-800 text-zinc-500 opacity-50 cursor-not-allowed'
-            }`}
+            disabled={!isLuEtApprouve || status !== 'idle'}
+            className={`w-full py-4 rounded-xl flex items-center justify-center space-x-2 transition-all mt-8 font-bold text-lg
+              ${status === 'success' 
+                ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/50' 
+                : status === 'saving' 
+                  ? 'bg-zinc-800 text-white/50 cursor-wait' 
+                  : isLuEtApprouve
+                    ? 'bg-lilas text-black hover:bg-lilas/90 shadow-[0_0_20px_rgba(168,85,247,0.3)] active:scale-95'
+                    : 'bg-zinc-800 text-zinc-500 opacity-50 cursor-not-allowed'
+              }`}
           >
-            <Check size={24} />
-            <span>Soumettre la fiche de consentement</span>
-          </button>
+            {status === 'saving' ? (
+              <>
+                <RefreshCw className="animate-spin" size={24} />
+                <span>Création du PDF...</span>
+              </>
+            ) : status === 'success' ? (
+              <>
+                <Check size={24} />
+                <span>Décharge validée !</span>
+              </>
+            ) : (
+              <>
+                <Check size={24} />
+                <span>Soumettre la fiche de consentement</span>
+              </>
+            )}
+          </motion.button>
 
         </div>
       </div>
