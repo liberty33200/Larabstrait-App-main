@@ -9,6 +9,7 @@ import session from "express-session";
 import cookieParser from "cookie-parser";
 import * as msal from "@azure/msal-node";
 import webpush from "web-push";
+import multer from "multer";
 import Database from "better-sqlite3";
 import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
@@ -26,9 +27,17 @@ const dataDir = path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
+const oldDbPath = path.join(dataDir, 'notifications.db');
+const newDbPath = path.join(dataDir, 'larabstrait.db');
 
-// 2. On range la base de données DEDANS
-const db = new Database(path.join(dataDir, 'notifications.db'));
+// Le serveur renomme le fichier tout seul s'il trouve l'ancien !
+if (fs.existsSync(oldDbPath) && !fs.existsSync(newDbPath)) {
+  fs.renameSync(oldDbPath, newDbPath);
+  console.log("📦 Base de données renommée avec succès en larabstrait.db");
+}
+
+const db = new Database(newDbPath);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +57,32 @@ db.exec(`
     completed INTEGER DEFAULT 0,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  /* NOUVELLE TABLE POUR LE CATALOGUE FLASHS */
+  CREATE TABLE IF NOT EXISTS flashes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    price TEXT NOT NULL,
+    size TEXT NOT NULL,
+    duration INTEGER DEFAULT 60, -- Durée estimée en minutes
+    available INTEGER DEFAULT 1,
+    image_filename TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
+// --- Juste après ton db.exec(...) ---
+
+try {
+  // On tente d'ajouter la colonne duration si elle n'existe pas encore
+  db.prepare("ALTER TABLE flashes ADD COLUMN duration INTEGER DEFAULT 60").run();
+  console.log("📦 Base de données mise à jour : colonne 'duration' ajoutée.");
+} catch (e) {
+  // Si la colonne existe déjà, SQLite renvoie une erreur qu'on ignore simplement
+}
+try {
+  db.prepare("ALTER TABLE flashes ADD COLUMN client_data TEXT").run();
+  console.log("✅ Colonne 'client_data' ajoutée.");
+} catch (e) {}
 
 // Configuration Web Push
 const vapidKeys = {
@@ -145,6 +179,157 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.use(cookieParser());
+// ==========================================
+// GESTION DU CATALOGUE DE FLASHS (Images & DB)
+// ==========================================
+
+// 1. Dossier de stockage des images
+const flashesDir = path.join(process.cwd(), 'data', 'flashes');
+if (!fs.existsSync(flashesDir)) {
+  fs.mkdirSync(flashesDir, { recursive: true });
+}
+
+// 2. Configuration de Multer
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, flashesDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, 'flash-' + uniqueSuffix + ext);
+  }
+});
+const upload = multer({ storage });
+
+// 3. Route statique pour les images
+app.use('/api/flashes/images', express.static(flashesDir));
+
+// 4. API : Récupérer tout le catalogue
+app.get('/api/flashes', (req, res) => {
+  try {
+    const flashes = db.prepare("SELECT * FROM flashes ORDER BY created_at DESC").all();
+    res.json(flashes.map((f: any) => ({ ...f, available: f.available === 1 })));
+  } catch (error) {
+    res.status(500).json({ error: "Erreur lors de la récupération des flashs" });
+  }
+});
+
+// 5. API : Ajouter un nouveau flash (avec DURATION)
+app.post('/api/flashes', upload.single('image'), (req, res) => {
+  try {
+    const { title, price, size, duration } = req.body;
+    if (!req.file) return res.status(400).json({ error: "L'image est obligatoire." });
+
+    // On insère la durée envoyée par l'admin
+    const stmt = db.prepare("INSERT INTO flashes (title, price, size, duration, image_filename) VALUES (?, ?, ?, ?, ?)");
+    const info = stmt.run(title, price, size, duration || 60, req.file.filename);
+    
+    res.status(201).json({ success: true, id: info.lastInsertRowid });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur lors de la création du flash" });
+  }
+});
+
+// API : Modifier un flash existant
+app.put('/api/flashes/:id', upload.single('image'), (req, res) => {
+  try {
+    const { title, price, size, duration } = req.body;
+    const flashId = req.params.id;
+
+    const existing: any = db.prepare("SELECT image_filename FROM flashes WHERE id = ?").get(flashId);
+    if (!existing) return res.status(404).json({ error: "Flash non trouvé" });
+
+    let fileName = existing.image_filename;
+    if (req.file) {
+      const oldPath = path.join(flashesDir, existing.image_filename);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      fileName = req.file.filename;
+    }
+
+    // L'ordre ici doit être identique à l'ordre des ? ci-dessous
+    const stmt = db.prepare(`
+      UPDATE flashes 
+      SET title = ?, price = ?, size = ?, duration = ?, image_filename = ? 
+      WHERE id = ?
+    `);
+    
+    stmt.run(title, price, size, duration, fileName, flashId);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erreur modification" });
+  }
+});
+
+// 6. API : Bloquer/Débloquer un flash
+app.patch('/api/flashes/:id', express.json(), (req, res) => {
+  try {
+    const { available, reservationDetails } = req.body;
+    const clientData = reservationDetails ? JSON.stringify(reservationDetails) : null;
+
+    db.prepare("UPDATE flashes SET available = ?, client_data = ? WHERE id = ?")
+      .run(available ? 1 : 0, clientData, req.params.id);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur réservation" });
+  }
+});
+
+// 7. API : Supprimer un flash
+app.delete('/api/flashes/:id', (req, res) => {
+  try {
+    const flash: any = db.prepare("SELECT image_filename FROM flashes WHERE id = ?").get(req.params.id);
+    if (flash) {
+      const imgPath = path.join(flashesDir, flash.image_filename);
+      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+      db.prepare("DELETE FROM flashes WHERE id = ?").run(req.params.id);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Erreur suppression" });
+  }
+});
+
+// 8. API : Disponibilités (18h le jour J -> 00h le lendemain)
+app.get('/api/availability', async (req, res) => {
+  const { date, duration } = req.query; 
+  const flashDur = parseInt(duration as string) || 60;
+
+  try {
+    // On crée la date de début (ex: 14 avril à 18:00)
+    const start = new Date(`${date}T18:00:00`);
+    
+    // On crée la date de fin en ajoutant 6 heures à la date de début
+    const end = new Date(start.getTime() + (6 * 60 * 60 * 1000)); 
+
+    const existingAppointments: any[] = []; 
+    const slots = [];
+    let current = new Date(start);
+    const step = 30; // On propose un créneau toutes les 30 min
+
+    while (current.getTime() + (flashDur * 60000) <= end.getTime()) {
+      const slotStart = new Date(current);
+      const slotEnd = new Date(current.getTime() + (flashDur * 60000));
+
+      const isFree = !existingAppointments.some(app => {
+        const appStart = new Date(app.start);
+        const appEnd = new Date(app.end);
+        return (slotStart < appEnd && slotEnd > appStart);
+      });
+
+      if (isFree) {
+        slots.push(slotStart.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+      }
+      current = new Date(current.getTime() + (step * 60000));
+    }
+    res.json(slots);
+  } catch (error) {
+    res.status(500).json({ error: "Erreur calcul créneaux" });
+  }
+});
+
 
   // ==========================================
   // ROUTE DÉCHARGE DE SOINS (Corrigée et blindée)
@@ -449,7 +634,7 @@ async function startServer() {
                 subject: `Confirmation de rendez-vous - Larabstrait`,
                 body: {
                   contentType: "HTML",
-                  content: `<p>Bonjour <b>${clientName}</b>,</p><p>Votre rendez-vous du <b>${formattedDate} à ${formattedTime}</b> est bien confirmé.</p><p>À bientôt !<br/>Lara</p>`
+                  content: `<p>Hello !</b>,</p><p>Ton rendez-vous du <b>${formattedDate} à ${formattedTime}</b> est bien confirmé !</p><p>À bientôt !<br/>Larabstrait</p>`
                 },
                 toRecipients: [{ emailAddress: { address: clientEmail.trim() } }]
               }

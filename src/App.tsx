@@ -4,6 +4,9 @@
  */
 import { ConsentFormView } from './components/ConsentFormView';
 import jsPDF from 'jspdf';
+import { QueueView } from './components/QueueView';
+import { FlashAdminView } from './components/FlashAdminView';
+import { KioskView } from './components/KioskView';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
 
@@ -11,13 +14,17 @@ import {
   Users, 
   Download,
   Clock, 
-  Plus, 
+  Sparkles,
+  Plus,
   Search, 
   LayoutDashboard, 
   Settings, 
   LogOut,
+  Image as ImageIcon,
   Eye,
   Mail,
+  LayoutGrid,
+  ListOrdered,
   ChevronRight,
   ChevronDown,
   MoreVertical,
@@ -3301,6 +3308,9 @@ const BugReportView = ({ apiFetch }: any) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [showKiosk, setShowKiosk] = useState(false);
+  const [isEventsOpen, setIsEventsOpen] = useState(false);
+  const [isKioskMode, setIsKioskMode] = useState(false);
   const [appointments, setAppointments] = useState([]);
   const [clients, setClients] = useState([]);
   const [timeOffEvents, setTimeOffEvents] = useState([]);
@@ -3811,6 +3821,53 @@ return {
             active={activeTab === 'settings'} 
             onClick={() => navigateTo('settings')}
           />
+        
+          {/* SECTION ÉVÉNEMENTS DÉROULANTE */}
+          <div className="space-y-1">
+            <button 
+              onClick={() => setIsEventsOpen(!isEventsOpen)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              <div className="flex items-center space-x-3">
+                <Sparkles size={20} className={isEventsOpen ? "text-lilas" : ""} />
+                <span className="font-medium">Événements</span>
+              </div>
+              <motion.div animate={{ rotate: isEventsOpen ? 180 : 0 }}>
+                <ChevronDown size={16} />
+              </motion.div>
+            </button>
+
+            <AnimatePresence>
+              {isEventsOpen && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden flex flex-col space-y-1 ml-4 border-l border-white/10 pl-2 mt-1"
+                >
+                  <SidebarItem 
+                    icon={LayoutGrid} 
+                    label="Mode Kiosk" 
+                    active={false} 
+                    onClick={() => setShowKiosk(true)} 
+                  />
+                  <SidebarItem 
+                    icon={ImageIcon} 
+                    label="Catalogue Flash" 
+                    active={activeTab === 'flashes'} 
+                    onClick={() => { setActiveTab('flashes'); setIsMobileMenuOpen(false); }} 
+                  />
+                  <SidebarItem 
+                    icon={ListOrdered} 
+                    label="File d'attente" 
+                    active={activeTab === 'queue'} 
+                    onClick={() => { setActiveTab('queue'); setIsMobileMenuOpen(false); }} 
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <SidebarItem 
             icon={AlertTriangle} // N'oublie pas d'importer AlertTriangle en haut s'il manque
             label="Bug / Améliorations" 
@@ -3831,6 +3888,7 @@ return {
         </div>
       </aside>
 
+      {/* Main Content */}
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8">
         {/* Global Search Header */}
@@ -3874,47 +3932,16 @@ return {
           </div>
         )}
 
+        {/* LE MOTEUR D'AFFICHAGE DES VUES QUI AVAIT DISPARU */}
         <AnimatePresence mode="wait">
           {showCreateForm ? (
-            <CreateAppointmentView 
-              clients={clients}
-              onBack={() => setShowCreateForm(false)}
-              onCreated={() => {
-                setShowCreateForm(false);
-                fetchData(true);
-              }}
-              apiFetch={apiFetch}
-            />
+            <CreateAppointmentView key="create" clients={filteredClients} onBack={() => setShowCreateForm(false)} onCreated={() => { setShowCreateForm(false); fetchData(); }} apiFetch={apiFetch} />
           ) : showTimeOffForm ? (
-            <CreateTimeOffView 
-              onBack={() => setShowTimeOffForm(false)}
-              onCreated={() => {
-                setShowTimeOffForm(false);
-                fetchData(true);
-              }}
-              apiFetch={apiFetch}
-            />
+            <CreateTimeOffView key="timeoff" onBack={() => setShowTimeOffForm(false)} onCreated={() => { setShowTimeOffForm(false); fetchData(); }} apiFetch={apiFetch} />
           ) : selectedAppointment ? (
-            <AppointmentDetailView 
-              appointment={selectedAppointment} 
-              onBack={() => setSelectedAppointment(null)}
-              onUpdate={() => {
-                setSelectedAppointment(null);
-                fetchData(true);
-              }}
-              apiFetch={apiFetch}
-            />
-          ) : activeTab === 'dashboard' ? (
-            <DashboardView key="dashboard" appointments={filteredAppointments} rules={accountingRules} loading={loading} user={user} onSelectAppointment={setSelectedAppointment} />
+            <AppointmentDetailView key="detail" appointment={selectedAppointment} onBack={() => setSelectedAppointment(null)} onUpdate={() => { setSelectedAppointment(null); fetchData(); }} apiFetch={apiFetch} />
           ) : activeTab === 'calendar' ? (
-            <CalendarView 
-              key="calendar" 
-              appointments={appointments} 
-              timeOffEvents={timeOffEvents} 
-              onSelectAppointment={setSelectedAppointment} 
-              onCreateAppointment={() => setShowCreateForm(true)}
-              onCreateTimeOff={() => setShowTimeOffForm(true)}
-            />
+            <CalendarView key="calendar" appointments={filteredAppointments} timeOffEvents={timeOffEvents} onSelectAppointment={setSelectedAppointment} onCreateAppointment={() => setShowCreateForm(true)} onCreateTimeOff={() => setShowTimeOffForm(true)} />
           ) : activeTab === 'accounting' ? (
             <AccountingView key="accounting" appointments={filteredAppointments} rules={accountingRules} loading={loading} />
           ) : activeTab === 'billing' ? (
@@ -3922,26 +3949,25 @@ return {
           ) : activeTab === 'clients' ? (
             <ClientsView key="clients" clients={filteredClients} appointments={filteredAppointments} onSelectAppointment={setSelectedAppointment} apiFetch={apiFetch} />
           ) : activeTab === 'settings' ? (
-            <SettingsView 
-              key="settings" 
-              rules={accountingRules} 
-              setRules={setAccountingRules} 
-              apiFetch={apiFetch}
-              isPushSupported={isPushSupported}
-              pushSubscription={pushSubscription}
-              onSubscribe={subscribeToPush}
-              onUnsubscribe={unsubscribeFromPush}
-              onTestNotification={sendTestNotification}
-            />
-            ) : activeTab === 'reports' ? (
-              <BugReportView apiFetch={apiFetch} />
+            <SettingsView key="settings" rules={accountingRules} setRules={setAccountingRules} apiFetch={apiFetch} isPushSupported={isPushSupported} pushSubscription={pushSubscription} onSubscribe={subscribeToPush} onUnsubscribe={unsubscribeFromPush} onTestNotification={sendTestNotification} />
+          ) : activeTab === 'flashes' ? (
+            <FlashAdminView key="flashes" />
+          ) : activeTab === 'queue' ? (
+            <QueueView key="queue" apiFetch={apiFetch} />
+          ) : activeTab === 'reports' ? (
+            <BugReportView key="reports" apiFetch={apiFetch} />
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Vue en cours de développement...
-            </div>
+            <DashboardView key="dashboard" appointments={filteredAppointments} rules={accountingRules} loading={loading} user={user} onSelectAppointment={setSelectedAppointment} />
           )}
         </AnimatePresence>
       </main>
+
+      {/* GESTION DU KIOSK EN PLEIN ÉCRAN */}
+      <AnimatePresence>
+        {showKiosk && (
+          <KioskView onClose={() => setShowKiosk(false)} apiFetch={apiFetch} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
