@@ -1,0 +1,21 @@
+{
+    "sqltools.connections": [
+        {
+            "ssh": "Enabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "sshOptions": {
+                "port": 2222,
+                "host": "cookie-server.synology.me",
+                "username": "Florent",
+                "password": "vfr'\"edcVFR43EDC"
+            },
+            "driver": "PostgreSQL",
+            "name": "Larabstrait Prod",
+            "group": "localhost",
+            "database": "larabstrait_data",
+            "username": "admin_larabstrait"
+        }
+    ]
+}

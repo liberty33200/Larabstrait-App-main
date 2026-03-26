@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { 
   FileText, 
@@ -12,7 +12,6 @@ import {
   AlertCircle,
   Receipt,
   FileCheck,
-  FilePlus,
   RefreshCw
 } from 'lucide-react';
 
@@ -79,33 +78,6 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
     init();
   }, []);
 
-  const handleCreateDocument = async (appt: any, type: string) => {
-    if (!hasApiKey) {
-      alert("Veuillez d'abord configurer votre clé API Abby dans les paramètres.");
-      return;
-    }
-    
-    setIsCreating(`${appt.id}-${type}`);
-    try {
-      const res = await apiFetch('/api/abby/create-document', {
-        method: 'POST',
-        body: JSON.stringify({ appointment: appt, type }),
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.message);
-      } else {
-        alert(data.error || "Erreur lors de la création du document.");
-      }
-    } catch (err) {
-      alert("Erreur réseau lors de la création du document.");
-    } finally {
-      setIsCreating(null);
-    }
-  };
-
   const handleDownloadPDF = async (inv: any) => {
     try {
       const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf`);
@@ -141,6 +113,55 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
       alert("Impossible de prévisualiser le PDF.");
     }
   };
+
+  // --- NOUVEAU : CALCUL DES VRAIES STATISTIQUES ABBY ---
+  const stats = useMemo(() => {
+    let pendingAmount = 0;
+    let pendingCount = 0;
+    let paidThisMonth = 0;
+    let posAmount = 0;
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    invoices.forEach(inv => {
+      const amount = parseFloat(inv.amount) || 0;
+      
+      // 1. En attente (Factures non payées)
+      if (inv.type === 'Facture' && inv.status !== 'paid') {
+        pendingAmount += amount;
+        pendingCount += 1;
+      }
+
+      // 2. Payé ce mois-ci
+      if (inv.type === 'Facture' && inv.status === 'paid') {
+        // Attention: Idéalement il faudrait la date de paiement, 
+        // mais on se base sur la date de création de la facture pour l'instant
+        const invDateParts = inv.date.split('/'); // Format DD/MM/YYYY
+        if (invDateParts.length === 3) {
+          const invMonth = parseInt(invDateParts[1]) - 1;
+          const invYear = parseInt(invDateParts[2]);
+          if (invMonth === currentMonth && invYear === currentYear) {
+            paidThisMonth += amount;
+          }
+        }
+      }
+
+      // 3. Bons de commande en cours
+      if (inv.type === 'Bon de commande') {
+        posAmount += amount;
+      }
+    });
+
+    return {
+      pendingAmount,
+      pendingCount,
+      paidThisMonth,
+      posAmount
+    };
+  }, [invoices]);
+  // --- FIN DU CALCUL ---
 
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -180,15 +201,19 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
         </div>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards (AVEC LES VRAIES VALEURS) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="glass-card p-6 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-400">En attente</span>
             <Clock size={20} className="text-amber-400" />
           </div>
-          <div className="text-2xl font-bold">1 560,00 €</div>
-          <div className="text-xs text-amber-400/80">3 documents à relancer</div>
+          <div className="text-2xl font-bold">
+            {stats.pendingAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+          </div>
+          <div className="text-xs text-amber-400/80">
+            {stats.pendingCount > 0 ? `${stats.pendingCount} facture(s) à relancer` : 'Tout est à jour !'}
+          </div>
         </div>
         
         <div className="glass-card p-6 space-y-2">
@@ -196,8 +221,10 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
             <span className="text-sm text-gray-400">Payé (ce mois)</span>
             <CheckCircle2 size={20} className="text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold">3 240,00 €</div>
-          <div className="text-xs text-emerald-400/80">+12% par rapport au mois dernier</div>
+          <div className="text-2xl font-bold">
+            {stats.paidThisMonth.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+          </div>
+          <div className="text-xs text-emerald-400/80">Revenus officiellement facturés</div>
         </div>
 
         <div className="glass-card p-6 space-y-2">
@@ -205,8 +232,10 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
             <span className="text-sm text-gray-400">Bons de commande</span>
             <FileText size={20} className="text-lilas" />
           </div>
-          <div className="text-2xl font-bold">4 800,00 €</div>
-          <div className="text-xs text-lilas/80">Volume total en cours</div>
+          <div className="text-2xl font-bold">
+            {stats.posAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+          </div>
+          <div className="text-xs text-lilas/80">Volume total généré</div>
         </div>
       </div>
 
