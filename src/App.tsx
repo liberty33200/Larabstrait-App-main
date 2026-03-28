@@ -107,7 +107,7 @@ export default function App() {
     const isIframe = window.self !== window.top;
     const headers = { ...options.headers, 'Authorization': token ? `Bearer ${token}` : '', 'X-Dev-Bypass': isIframe ? 'true' : 'false' };
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
@@ -151,6 +151,8 @@ export default function App() {
           id: appt.cr7e0_gestiontatouageid || appt.id,
           client: clientName,
           clientEmail: appt.cr7e0_email || '',
+          phone: appt.cr7e0_telephone || '',
+          instagram: appt.cr7e0_instagram || '',
           date: isValid ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date à définir',
           time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : (isTimeOff ? 'Journée' : ''),
           rawDate,
@@ -167,7 +169,12 @@ export default function App() {
           method: 'N/A',
           price: `${appt.cr7e0_tariftattoo || 0} €`,
           isTimeOff,
-          projectStatus: appt.cr7e0_etatdessin || 'À dessiner'
+          projectStatus: appt.cr7e0_etatdessin || 'À dessiner',
+          
+          // LIENS ABBY
+          abbyBdcId: appt.cr7e0_abby_bdc_id || null,
+          abbyAcompteId: appt.cr7e0_abby_acompte_id || null,
+          abbyFactureId: appt.cr7e0_abby_facture_id || null
         };
       });
 
@@ -318,7 +325,7 @@ export default function App() {
           ) : activeTab === 'billing' ? (
             <BillingView key="billing" appointments={filteredAppointments} clients={filteredClients} apiFetch={apiFetch} />
           ) : activeTab === 'clients' ? (
-            <ClientsView key="clients" clients={filteredClients} appointments={filteredAppointments} onSelectAppointment={setSelectedAppointment} apiFetch={apiFetch} />
+            <ClientsView key="clients" clients={filteredClients} appointments={filteredAppointments} onSelectAppointment={setSelectedAppointment} apiFetch={apiFetch} onUpdate={fetchData} />
           ) : activeTab === 'settings' ? (
             <SettingsView key="settings" rules={accountingRules} setRules={setAccountingRules} apiFetch={apiFetch} isPushSupported={isPushSupported} pushSubscription={pushSubscription} onSubscribe={subscribeToPush} onUnsubscribe={unsubscribeFromPush} onTestNotification={sendTestNotification} />
           ) : activeTab === 'flashes' ? (
@@ -328,7 +335,7 @@ export default function App() {
           ) : activeTab === 'reports' ? (
             <BugReportView key="reports" apiFetch={apiFetch} />
           ) : (
-            <DashboardView key="dashboard" appointments={filteredAppointments} rules={accountingRules} loading={loading} user={user} onSelectAppointment={setSelectedAppointment} />
+            <DashboardView key="dashboard" appointments={filteredAppointments} rules={accountingRules} loading={loading} user={user} onSelectAppointment={setSelectedAppointment} apiFetch={apiFetch}/>
           )}
         </AnimatePresence>
       </main>

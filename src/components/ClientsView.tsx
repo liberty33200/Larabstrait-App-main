@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { ChevronRight, FileText, RefreshCw, Download, Eye } from 'lucide-react';
+import { ChevronRight, FileText, RefreshCw, Download, Eye, Phone, Instagram, Edit2, Save } from 'lucide-react';
 
-export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFetch }: any) => {
+export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFetch, onUpdate }: any) => {
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [sortBy, setSortBy] = useState('alpha');
 
   const [clientDocuments, setClientDocuments] = useState<any[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  // Nouveaux états pour l'édition des contacts
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState({ phone: '', instagram: '' });
 
   useEffect(() => {
     const checkKey = async () => {
@@ -100,8 +105,25 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
         const amount = typeof appt.total === 'number' ? appt.total : parseFloat(String(appt.total || appt.price || 0).replace(/[^\d.-]/g, '')) || 0;
         return sum + amount;
       }, 0);
+
+      // On récupère le tel/insta depuis le rendez-vous le plus récent de ce client
+      let latestPhone = '';
+      let latestInsta = '';
+      const sortedAppts = [...clientAppts].sort((a: any, b: any) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
+      if (sortedAppts.length > 0) {
+        const latest = sortedAppts[0];
+        latestPhone = latest.phone || '';
+        latestInsta = latest.instagram || '';
+      }
       
-      return { ...client, appointmentCount: clientAppts.length, totalSpent };
+      return { 
+        ...client, 
+        appointmentCount: clientAppts.length, 
+        totalSpent,
+        phone: latestPhone,
+        instagram: latestInsta,
+        appointments: clientAppts // On stocke les RDV pour l'update Dataverse
+      };
     });
   }, [clients, appointments]);
 
@@ -113,30 +135,105 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
     return list;
   }, [clientsWithStats, sortBy]);
 
-  if (selectedClient) {
-    const clientAppointments = appointments.filter((appt: any) => {
-      if (appt.isTimeOff) return false;
-      const apptEmail = (appt.clientEmail || "").toLowerCase().trim();
-      const clientEmail = (selectedClient.email || "").toLowerCase().trim();
-      if (clientEmail && apptEmail && apptEmail === clientEmail) return true;
-      if (!clientEmail && !apptEmail) {
-        const apptName = (appt.client || "").toLowerCase().trim();
-        const clientName = (selectedClient.displayName || selectedClient.firstName || "").toLowerCase().trim();
-        return apptName && apptName === clientName;
-      }
-      return false;
-    });
+  const handleSelectClient = (client: any) => {
+    setSelectedClient(client);
+    setEditForm({ phone: client.phone || '', instagram: client.instagram || '' });
+    setIsEditing(false);
+  };
 
+  const handleSaveContactInfo = async () => {
+    if (!selectedClient || !apiFetch) return;
+    setSaving(true);
+    try {
+      // Pour synchroniser la fiche client, on met à jour les coordonnées sur TOUS ses rendez-vous dans Dataverse
+      const updatePromises = selectedClient.appointments.map((app: any) => 
+        apiFetch(`/api/appointments/${app.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cr7e0_telephone: editForm.phone,
+            cr7e0_instagram: editForm.instagram
+          })
+        })
+      );
+
+      await Promise.all(updatePromises);
+      
+      // Mise à jour locale pour que l'affichage change de suite
+      setSelectedClient({ ...selectedClient, phone: editForm.phone, instagram: editForm.instagram });
+      setIsEditing(false);
+      if (onUpdate) onUpdate(); 
+      
+    } catch (error) {
+      console.error("Erreur lors de la sauvegarde du client", error);
+      alert("Une erreur est survenue lors de la sauvegarde.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (selectedClient) {
     return (
       <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-        <div className="flex items-center space-x-4">
-          <button onClick={() => setSelectedClient(null)} className="p-2 hover:bg-white/5 rounded-xl transition-all text-gray-400 hover:text-white">
-            <ChevronRight size={24} className="rotate-180" />
-          </button>
-          <div>
-            <h2 className="text-2xl md:text-3xl font-bold">{selectedClient.firstName} {selectedClient.lastName}</h2>
-            <p className="text-gray-400 text-sm md:text-base">{selectedClient.email}</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button onClick={() => setSelectedClient(null)} className="p-2 hover:bg-white/5 rounded-xl transition-all text-gray-400 hover:text-white">
+              <ChevronRight size={24} className="rotate-180" />
+            </button>
+            <div>
+              <h2 className="text-2xl md:text-3xl font-bold">{selectedClient.displayName || `${selectedClient.firstName} ${selectedClient.lastName}`}</h2>
+              <p className="text-gray-400 text-sm md:text-base">{selectedClient.email}</p>
+            </div>
           </div>
+          
+          {/* BOUTONS D'ÉDITION */}
+          {!isEditing ? (
+            <button onClick={() => setIsEditing(true)} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all flex items-center space-x-2">
+              <Edit2 size={16} /><span>Modifier contact</span>
+            </button>
+          ) : (
+            <div className="flex items-center space-x-2">
+              <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-gray-400 hover:text-white text-sm font-medium transition-all">Annuler</button>
+              <button onClick={handleSaveContactInfo} disabled={saving} className="px-4 py-2 bg-lilas text-black rounded-xl text-sm font-bold transition-all flex items-center space-x-2 disabled:opacity-50">
+                {saving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                <span>{saving ? 'Enregistrement...' : 'Enregistrer'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* NOUVELLE SECTION CONTACT */}
+        <div className="glass-card p-6 border-t-4 border-lilas">
+          <h3 className="font-bold text-lg mb-4">Coordonnées</h3>
+          {isEditing ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-gray-500 uppercase block mb-1 ml-1">Téléphone</label>
+                <div className="relative">
+                  <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-lilas" />
+                  <input type="tel" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} placeholder="Ex: 06 12 34 56 78" className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-lilas/50 text-white transition-colors" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 uppercase block mb-1 ml-1">Instagram</label>
+                <div className="relative">
+                  <Instagram size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-lilas" />
+                  <input type="text" value={editForm.instagram} onChange={e => setEditForm({...editForm, instagram: e.target.value})} placeholder="Ex: @pseudo" className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-lilas/50 text-white transition-colors" />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-6">
+              <div className="flex items-center space-x-3 text-gray-300">
+                <div className="p-2 bg-white/5 rounded-lg border border-white/10"><Phone size={18} className={selectedClient.phone ? "text-lilas" : "text-gray-500"} /></div>
+                <span className="font-medium">{selectedClient.phone || <span className="italic text-gray-600 font-normal">Aucun numéro</span>}</span>
+              </div>
+              <div className="flex items-center space-x-3 text-gray-300">
+                <div className="p-2 bg-white/5 rounded-lg border border-white/10"><Instagram size={18} className={selectedClient.instagram ? "text-lilas" : "text-gray-500"} /></div>
+                <span className="font-medium">{selectedClient.instagram || <span className="italic text-gray-600 font-normal">Aucun Instagram</span>}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="glass-card overflow-hidden">
@@ -154,8 +251,8 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
                 </tr>
               </thead>
               <tbody>
-                {clientAppointments.length > 0 ? (
-                  clientAppointments.map((appt: any) => (
+                {selectedClient.appointments && selectedClient.appointments.length > 0 ? (
+                  selectedClient.appointments.map((appt: any) => (
                     <tr 
                       key={appt.id} 
                       onClick={() => onSelectAppointment(appt)}
@@ -264,13 +361,25 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
           <motion.div 
             key={client.id} 
             whileHover={{ y: -4 }}
-            onClick={() => setSelectedClient(client)}
-            className="glass-card p-6 cursor-pointer hover:border-lilas/30 transition-all group flex flex-col justify-between"
+            onClick={() => handleSelectClient(client)}
+            className="glass-card p-6 cursor-pointer hover:border-lilas/30 transition-all group flex flex-col justify-between relative overflow-hidden"
           >
+            {/* Liseré haut si le client a beaucoup dépensé */}
+            {client.totalSpent >= 500 && <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500/50" />}
+
             <div>
-              <h4 className="font-bold text-lg group-hover:text-lilas transition-colors">{client.displayName || `${client.firstName} ${client.lastName}`}</h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-bold text-lg group-hover:text-lilas transition-colors truncate pr-2">
+                  {client.displayName || `${client.firstName} ${client.lastName}`}
+                </h4>
+                <div className="flex space-x-2 text-gray-500">
+                  {client.phone && <Phone size={14} className="text-gray-400" />}
+                  {client.instagram && <Instagram size={14} className="text-gray-400" />}
+                </div>
+              </div>
               <p className="text-gray-400 text-sm truncate">{client.email}</p>
             </div>
+            
             <div className="flex justify-between items-end mt-6 pt-4 border-t border-white/5">
               <div className="flex flex-col">
                 <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Rendez-vous</span>

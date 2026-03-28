@@ -1,176 +1,44 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Search, Receipt, FileText, CheckCircle2, Clock, Copy, Check, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
-import { 
-  FileText, 
-  Plus, 
-  Search, 
-  Filter, 
-  Download, 
-  Eye, 
-  Clock, 
-  CheckCircle2, 
-  AlertCircle,
-  Receipt,
-  FileCheck,
-  RefreshCw
-} from 'lucide-react';
 
-interface BillingViewProps {
-  appointments: any[];
-  clients: any[];
-  apiFetch: (url: string, options?: any) => Promise<Response>;
-  key?: string;
-}
-
-export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProps) => {
+export const BillingView = ({ appointments, clients, apiFetch }: any) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState('all'); // all, invoices, quotes, pos
-  const [hideCompleted, setHideCompleted] = useState(true);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
-  const [isCreating, setIsCreating] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'invoices' | 'deposits' | 'bdc'>('all');
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const fetchDocuments = async () => {
-    setLoading(true);
-    try {
-      const docsRes = await apiFetch('/api/abby/documents');
-      if (docsRes.ok) {
-        const docsData = await docsRes.json();
-        setInvoices(docsData);
-        if (docsData.length === 0) {
-          const debugRes = await apiFetch('/api/abby/test-debug');
-          if (debugRes.ok) {
-            setDebugInfo(await debugRes.json());
-          }
-        }
-      } else if (docsRes.status === 401) {
-        setHasApiKey(false);
-      }
-    } catch (err) {
-      console.error("Erreur fetch documents:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  React.useEffect(() => {
-    const init = async () => {
+  useEffect(() => {
+    const fetchDocs = async () => {
       setLoading(true);
       try {
-        const keyRes = await apiFetch('/api/settings/abby');
-        if (keyRes.ok) {
-          const keyData = await keyRes.json();
-          const keyExists = !!keyData.abby_api_key;
-          setHasApiKey(keyExists);
-
-          if (keyExists) {
-            await fetchDocuments();
-          }
+        const res = await apiFetch('/api/abby/documents');
+        if (res.ok) {
+          const data = await res.json();
+          setInvoices(data);
         }
-      } catch (err) {
-        console.error("Erreur initialisation Billing:", err);
+      } catch (e) {
+        console.error("Erreur téléchargement Abby docs:", e);
       } finally {
         setLoading(false);
       }
     };
-    init();
-  }, []);
-
-  const handleDownloadPDF = async (inv: any) => {
-    try {
-      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf`);
-      if (!res.ok) throw new Error("Erreur lors du téléchargement");
-      
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${inv.type}_${inv.id}.pdf`; 
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      alert("Impossible de télécharger le PDF. Le document n'est peut-être pas encore généré par Abby.");
-    }
-  };
-
-  const handlePreviewPDF = async (inv: any) => {
-    try {
-      const res = await apiFetch(`/api/abby/documents/${inv.internalId}/pdf?inline=true`);
-      if (!res.ok) throw new Error("Erreur lors de la récupération");
-      
-      const blob = await res.blob();
-      const file = new Blob([blob], { type: 'application/pdf' });
-      const url = URL.createObjectURL(file);
-      
-      window.open(url, '_blank');
-      
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch (err) {
-      alert("Impossible de prévisualiser le PDF.");
-    }
-  };
-
-  // --- NOUVEAU : CALCUL DES VRAIES STATISTIQUES ABBY ---
-  const stats = useMemo(() => {
-    let pendingAmount = 0;
-    let pendingCount = 0;
-    let paidThisMonth = 0;
-    let posAmount = 0;
-
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    invoices.forEach(inv => {
-      const amount = parseFloat(inv.amount) || 0;
-      
-      // 1. En attente (Factures non payées)
-      if (inv.type === 'Facture' && inv.status !== 'paid') {
-        pendingAmount += amount;
-        pendingCount += 1;
-      }
-
-      // 2. Payé ce mois-ci
-      if (inv.type === 'Facture' && inv.status === 'paid') {
-        // Attention: Idéalement il faudrait la date de paiement, 
-        // mais on se base sur la date de création de la facture pour l'instant
-        const invDateParts = inv.date.split('/'); // Format DD/MM/YYYY
-        if (invDateParts.length === 3) {
-          const invMonth = parseInt(invDateParts[1]) - 1;
-          const invYear = parseInt(invDateParts[2]);
-          if (invMonth === currentMonth && invYear === currentYear) {
-            paidThisMonth += amount;
-          }
-        }
-      }
-
-      // 3. Bons de commande en cours
-      if (inv.type === 'Bon de commande') {
-        posAmount += amount;
-      }
-    });
-
-    return {
-      pendingAmount,
-      pendingCount,
-      paidThisMonth,
-      posAmount
-    };
-  }, [invoices]);
-  // --- FIN DU CALCUL ---
+    fetchDocs();
+  }, [apiFetch]);
 
   const filteredInvoices = invoices.filter(inv => {
-    const matchesSearch = inv.client.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          inv.id.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const query = searchQuery.toLowerCase();
+    // Sécurité : on vérifie que le client et l'id existent avant de faire toLowerCase()
+    const clientName = inv.client || "";
+    const invId = inv.id || "";
+    const matchesSearch = clientName.toLowerCase().includes(query) || invId.toLowerCase().includes(query);
+
     let matchesType = true;
     if (filter === 'invoices') matchesType = inv.type === 'Facture';
-    if (filter === 'quotes') matchesType = inv.type === 'Devis';
-    if (filter === 'pos') matchesType = inv.type === 'Bon de commande';
+    if (filter === 'deposits') matchesType = inv.type === "Facture d'acompte";
+    if (filter === 'bdc') matchesType = inv.type === 'Bon de commande' || inv.type === 'Devis';
 
     let matchesStatus = true;
     if (hideCompleted && inv.status === 'paid') {
@@ -180,221 +48,123 @@ export const BillingView = ({ appointments, clients, apiFetch }: BillingViewProp
     return matchesSearch && matchesType && matchesStatus;
   });
 
+  const handleCopyId = (internalId: string) => {
+    navigator.clipboard.writeText(internalId);
+    setCopiedId(internalId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-8"
-    >
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Facturation</h2>
-          <p className="text-gray-400 mt-1">Gérez vos devis, bons de commande et factures via Abby.</p>
+          <h2 className="text-2xl font-bold mb-1">Facturation</h2>
+          <p className="text-gray-400 text-sm">Gérez vos devis et factures Abby</p>
         </div>
-        
-        <div className="flex items-center space-x-3">
-          {loading && <RefreshCw size={20} className="text-lilas animate-spin mr-2" />}
-          <button className="btn-primary flex items-center space-x-2">
-            <Plus size={20} />
-            <span>Nouveau document</span>
-          </button>
+
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+            <input 
+              type="text" 
+              placeholder="Rechercher (client, ref)..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-card-bg border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-lilas/50"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Stats Cards (AVEC LES VRAIES VALEURS) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">En attente</span>
-            <Clock size={20} className="text-amber-400" />
-          </div>
-          <div className="text-2xl font-bold">
-            {stats.pendingAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
-          </div>
-          <div className="text-xs text-amber-400/80">
-            {stats.pendingCount > 0 ? `${stats.pendingCount} facture(s) à relancer` : 'Tout est à jour !'}
-          </div>
-        </div>
-        
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Payé (ce mois)</span>
-            <CheckCircle2 size={20} className="text-emerald-400" />
-          </div>
-          <div className="text-2xl font-bold">
-            {stats.paidThisMonth.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
-          </div>
-          <div className="text-xs text-emerald-400/80">Revenus officiellement facturés</div>
-        </div>
+      {/* TABS (Filtres) */}
+      <div className="flex items-center space-x-2 overflow-x-auto pb-2 custom-scrollbar">
+        <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'all' ? 'bg-lilas text-black' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`}>
+          Tous les documents
+        </button>
+        <button onClick={() => setFilter('bdc')} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'bdc' ? 'bg-blue-500 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`}>
+          Bons de commande
+        </button>
+        <button onClick={() => setFilter('deposits')} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'deposits' ? 'bg-amber-500 text-black' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`}>
+          Acomptes
+        </button>
+        <button onClick={() => setFilter('invoices')} className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'invoices' ? 'bg-emerald-500 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}`}>
+          Factures finales
+        </button>
 
-        <div className="glass-card p-6 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Bons de commande</span>
-            <FileText size={20} className="text-lilas" />
-          </div>
-          <div className="text-2xl font-bold">
-            {stats.posAmount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
-          </div>
-          <div className="text-xs text-lilas/80">Volume total généré</div>
+        <div className="ml-auto pl-4 flex items-center">
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} className="form-checkbox text-lilas rounded border-white/20 bg-white/5" />
+            <span className="text-sm text-gray-400 whitespace-nowrap">Masquer les encaissés</span>
+          </label>
         </div>
       </div>
 
-      {/* Filters & Search */}
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/10">
-        <div className="relative flex-1 w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-          <input 
-            type="text" 
-            placeholder="Rechercher une facture ou un client..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-dark-bg border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:outline-none focus:border-lilas/50 transition-all"
-          />
-        </div>
-        
-        <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-          <button 
-            onClick={() => setFilter('all')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${filter === 'all' ? 'bg-lilas text-black' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
-          >
-            Tous
-          </button>
-          <button 
-            onClick={() => setFilter('pos')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'pos' ? 'bg-lilas text-black' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
-          >
-            Bons de commande
-          </button>
-          <button 
-            onClick={() => setFilter('quotes')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'quotes' ? 'bg-lilas text-black' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
-          >
-            Devis
-          </button>
-          <button 
-            onClick={() => setFilter('invoices')}
-            className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${filter === 'invoices' ? 'bg-lilas text-black' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
-          >
-            Factures
-          </button>
-
-          <div className="w-px h-6 bg-white/10 mx-1"></div>
-
-          <button 
-            onClick={() => setHideCompleted(!hideCompleted)}
-            className={`px-3 py-2 flex items-center space-x-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${hideCompleted ? 'bg-white/10 text-white' : 'bg-white/5 hover:bg-white/10 text-gray-400'}`}
-            title="Masquer/Afficher les documents signés ou encaissés"
-          >
-            <Filter size={16} />
-            <span>{hideCompleted ? 'En cours' : 'Tous les statuts'}</span>
-          </button>
-          
-          <button 
-            onClick={fetchDocuments}
-            disabled={loading}
-            className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-lilas transition-all disabled:opacity-50"
-            title="Actualiser"
-          >
-            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      </div>
-
-      {/* Invoices Table */}
       <div className="glass-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-white/5 bg-white/5">
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Référence</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Client</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Type</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Montant</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Date</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Statut</th>
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-400">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredInvoices.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500 italic">
-                    {hasApiKey === false 
-                      ? "Veuillez configurer votre clé API Abby dans les paramètres pour voir vos documents."
-                      : "Aucun document ne correspond à vos filtres."}
-                  </td>
-                </tr>
-              )}
-              {filteredInvoices.map((inv) => (
-                <tr key={inv.id} className="hover:bg-white/5 transition-colors group">
-                  <td className="px-6 py-4 font-mono text-sm text-lilas">{inv.id}</td>
-                  <td className="px-6 py-4 font-medium">{inv.client}</td>
-                  <td className="px-6 py-4 text-sm text-gray-400">{inv.type}</td>
-                  <td className="px-6 py-4 font-bold">{inv.amount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</td>
-                  <td className="px-6 py-4 text-sm text-gray-400">{inv.date}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                      inv.status === 'paid' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                      inv.status === 'sent' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
-                      'bg-gray-500/10 text-gray-400 border border-gray-500/20'
-                    }`}>
-                      {inv.statusLabel || 'Brouillon'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={() => handleDownloadPDF(inv)}
-                        className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" 
-                        title="Télécharger PDF"
-                      >
-                        <Download size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handlePreviewPDF(inv)}
-                        className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all" 
-                        title="Visualiser le document"
-                      >
-                        <Eye size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Debug Info if empty */}
-      {hasApiKey && invoices.length === 0 && !loading && debugInfo && (
-        <div className="p-4 bg-white/5 border border-white/10 rounded-xl text-[10px] font-mono text-gray-500 overflow-hidden">
-          <p className="mb-2 font-bold text-gray-400 uppercase tracking-widest">DIAGNOSTIC TECHNIQUE :</p>
-          <pre className="whitespace-pre-wrap">
-            {JSON.stringify(debugInfo, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {/* Abby Integration Banner */}
-      <div className={`p-6 bg-gradient-to-r ${hasApiKey ? 'from-emerald-500/10' : 'from-lilas/20'} to-transparent border ${hasApiKey ? 'border-emerald-500/20' : 'border-lilas/20'} rounded-2xl flex flex-col md:flex-row items-center justify-between gap-6`}>
-        <div className="flex items-center space-x-4">
-          <div className={`w-12 h-12 ${hasApiKey ? 'bg-emerald-500 text-white' : 'bg-lilas text-black'} rounded-xl flex items-center justify-center`}>
-            {hasApiKey ? <FileCheck size={24} /> : <Receipt size={24} />}
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+            <RefreshCw className="animate-spin text-lilas mb-4" size={32} />
+            <p>Synchronisation avec Abby en cours...</p>
           </div>
-          <div>
-            <h3 className="font-bold text-lg">{hasApiKey ? 'Compte Abby Connecté' : 'Liez votre compte Abby'}</h3>
-            <p className="text-sm text-gray-400">
-              {hasApiKey 
-                ? 'Votre compte est correctement lié. Vos documents Abby sont synchronisés.' 
-                : 'Automatisez la création de vos factures et bons de commande en connectant Larabstrait à Abby.'}
-            </p>
+        ) : filteredInvoices.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+            <Receipt size={48} className="mb-4 opacity-20" />
+            <p>Aucun document trouvé.</p>
           </div>
-        </div>
-        {!hasApiKey && (
-          <button className="px-6 py-3 bg-lilas text-black font-bold rounded-xl hover:scale-105 transition-all shadow-lg shadow-lilas/20">
-            Configurer l'API Abby
-          </button>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 text-xs uppercase tracking-wider text-gray-500">
+                  <th className="px-6 py-4 font-medium">Référence & Copie ID</th>
+                  <th className="px-6 py-4 font-medium">Client</th>
+                  <th className="px-6 py-4 font-medium">Type</th>
+                  <th className="px-6 py-4 font-medium">Date</th>
+                  <th className="px-6 py-4 font-medium text-right">Montant</th>
+                  <th className="px-6 py-4 font-medium text-center">Statut</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredInvoices.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-white/[0.02] transition-colors group">
+                    <td className="px-6 py-4 font-mono text-sm text-gray-300">
+                      <div className="flex items-center space-x-3">
+                        <span className="text-lilas font-bold">{inv.id}</span>
+                        {/* BOUTON COPIER ID SECRET */}
+                        <button 
+                          onClick={() => handleCopyId(inv.internalId)}
+                          className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[10px] text-gray-400 transition-all flex items-center space-x-1"
+                          title="Copier l'ID interne pour Dataverse"
+                        >
+                          {copiedId === inv.internalId ? <><Check size={12} className="text-emerald-400" /><span className="text-emerald-400">Copié</span></> : <><Copy size={12} /><span>Copier ID</span></>}
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-medium">{inv.client}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center space-x-2 text-sm text-gray-400">
+                        {inv.type.includes('commande') ? <FileText size={14} className="text-blue-400" /> : <Receipt size={14} className={inv.type.includes('acompte') ? 'text-amber-400' : 'text-emerald-400'} />}
+                        <span>{inv.type}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-400">{inv.date}</td>
+                    <td className="px-6 py-4 text-right font-bold">{inv.amount}€</td>
+                    <td className="px-6 py-4 text-center">
+                      <span className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                        inv.status === 'paid' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                        inv.status === 'sent' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                        'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                      }`}>
+                        {inv.status === 'paid' ? <CheckCircle2 size={12} /> : <Clock size={12} />}
+                        <span>{inv.statusLabel}</span>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </motion.div>
