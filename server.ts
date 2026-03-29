@@ -449,8 +449,20 @@ async function startServer() {
       if (clientEmail && userAccountId && rawDate && !isTimeOff) {
         try {
           const dateObj = new Date(rawDate);
-          const formattedDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-          const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+          // ✅ NOUVEAU CODE (avec fuseau horaire forcé)
+          const formattedDate = dateObj.toLocaleDateString('fr-FR', { 
+            weekday: 'long', 
+            day: 'numeric', 
+            month: 'long', 
+            year: 'numeric',
+            timeZone: 'Europe/Paris' // 👈 Force l'heure de Paris
+          });
+          
+          const formattedTime = dateObj.toLocaleTimeString('fr-FR', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            timeZone: 'Europe/Paris' // 👈 Force l'heure de Paris
+          });
 
           const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
           if (account) {
