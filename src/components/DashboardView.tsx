@@ -19,14 +19,14 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     }
   }, [apiFetch]);
 
-  // 🎯 FONCTION BLINDÉE : On calcule le statut 100% en local
+  // 🎯 Calcul du statut basé sur les propriétés propres fournies par App.tsx
   const getStatusBadge = (appt: any) => {
-    const style = (appt.style || appt.cr7e0_typederdv || "").toLowerCase();
+    const style = (appt.style || "").toLowerCase();
     const isTattoo = style === "flash" || style === "projet perso";
     
-    const hasBdc = Boolean(appt.abbyBdcId || appt.cr7e0_abby_bdc_id || appt.abby_bdc_id);
-    const isDispensed = appt.deposit === "Dispensé" || appt.deposit_status === "Dispensé" || appt.cr7e0_acompte === "129690002" || appt.cr7e0_acompte === "Dispensé";
-    const isPaid = appt.deposit === "Oui" || appt.deposit_status === "Oui" || appt.cr7e0_acompte === "129690000" || appt.cr7e0_acompte === "Oui";
+    const hasBdc = Boolean(appt.abbyBdcId);
+    const isDispensed = appt.deposit === "Dispensé";
+    const isPaid = appt.deposit === "Oui";
 
     if (isTattoo) {
       if (isPaid || isDispensed) return { label: "Ok", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" };
@@ -42,25 +42,29 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime();
   
-  // Séparation Futur / Passé
-  const upcomingAppointments = appointments.filter((appt: any) => (appt.rawDate || 0) >= today).sort((a: any, b: any) => a.rawDate - b.rawDate);
-  const pastAppointments = appointments.filter((appt: any) => (appt.rawDate || 0) > 0 && (appt.rawDate || 0) < today).sort((a: any, b: any) => b.rawDate - a.rawDate);
+  // Séparation Futur / Passé utilisant la variable rawDate calculée par App.tsx
+  const upcomingAppointments = appointments
+    .filter((appt: any) => (appt.rawDate || 0) >= today)
+    .sort((a: any, b: any) => (a.rawDate || 0) - (b.rawDate || 0));
+    
+  const pastAppointments = appointments
+    .filter((appt: any) => (appt.rawDate || 0) > 0 && (appt.rawDate || 0) < today)
+    .sort((a: any, b: any) => (b.rawDate || 0) - (a.rawDate || 0));
   
   // 🗂️ 1. DESSINS À PRÉPARER
   const drawingsToDo = upcomingAppointments.filter((appt: any) => 
-    appt.projectStatus === 'À dessiner' || appt.projectStatus === 'À modifier' || 
-    appt.cr7e0_etatdessin === 'À dessiner' || appt.cr7e0_etatdessin === 'À modifier'
+    appt.projectStatus === 'À dessiner' || appt.projectStatus === 'À modifier'
   );
   
-  // 🗂️ 2. VÉRIFIER FACTURATION (Manque d'ID Abby)
+  // 🗂️ 2. VÉRIFIER FACTURATION
   const toVerifyBilling = upcomingAppointments.filter((appt: any) => {
-    const style = (appt.style || appt.cr7e0_typederdv || "").toLowerCase();
+    const style = (appt.style || "").toLowerCase();
     if (style !== "flash" && style !== "projet perso") return false;
 
-    const hasBdc = Boolean(appt.abbyBdcId || appt.cr7e0_abby_bdc_id || appt.abby_bdc_id);
-    const hasDeposit = Boolean(appt.abbyAcompteId || appt.cr7e0_abby_acompte_id || appt.abby_deposit_id);
-    const hasFinal = Boolean(appt.abbyFactureId || appt.cr7e0_abby_facture_id || appt.abby_final_id);
-    const isDispensed = appt.deposit === "Dispensé" || appt.deposit_status === "Dispensé" || appt.cr7e0_acompte === "129690002" || appt.cr7e0_acompte === "Dispensé";
+    const hasBdc = Boolean(appt.abbyBdcId);
+    const hasDeposit = Boolean(appt.abbyAcompteId);
+    const hasFinal = Boolean(appt.abbyFactureId);
+    const isDispensed = appt.deposit === "Dispensé";
 
     return !hasBdc || (!hasDeposit && !isDispensed) || !hasFinal;
   });
@@ -68,14 +72,12 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
   // 🗂️ 3. DOSSIERS À FINALISER (Acompte non réglé)
   const toFinalize = upcomingAppointments.filter((appt: any) => {
     const badge = getStatusBadge(appt).label;
-    if (badge === "Ok") return false; // S'il est Ok en base, c'est bon.
+    if (badge === "Ok") return false;
 
-    // Vérification en direct sur Abby !
-    const depositId = appt.abbyAcompteId || appt.cr7e0_abby_acompte_id || appt.abby_deposit_id;
-    if (depositId) {
-      const acDoc = abbyDocs.find((d: any) => d.internalId === depositId);
+    if (appt.abbyAcompteId) {
+      const acDoc = abbyDocs.find((d: any) => d.internalId === appt.abbyAcompteId);
       if (acDoc && ['paid', 'signed', 'accepted', 'encaissé'].includes(acDoc.status)) {
-        return false; // C'est payé sur Abby, on masque !
+        return false;
       }
     }
     return true; 
@@ -83,25 +85,19 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
 
   // 🗂️ 4. FACTURES À ENCAISSER
   const toEncash = pastAppointments.filter((appt: any) => {
-    const style = (appt.style || appt.cr7e0_typederdv || "").toLowerCase();
+    const style = (appt.style || "").toLowerCase();
     if (style !== "flash" && style !== "projet perso") return false;
     
-    const finalId = appt.abbyFactureId || appt.cr7e0_abby_facture_id || appt.abby_final_id;
-    const depositId = appt.abbyAcompteId || appt.cr7e0_abby_acompte_id || appt.abby_deposit_id;
-    
-    if (!finalId && !depositId) return false; // Pas de facturation liée
+    if (!appt.abbyFactureId && !appt.abbyAcompteId) return false;
 
-    // Vérification en direct sur Abby !
-    if (finalId) {
-      const finalDoc = abbyDocs.find((d: any) => d.internalId === finalId);
+    if (appt.abbyFactureId) {
+      const finalDoc = abbyDocs.find((d: any) => d.internalId === appt.abbyFactureId);
       if (finalDoc && ['paid', 'signed', 'accepted', 'encaissé'].includes(finalDoc.status)) {
-        return false; // Facture finale payée sur Abby, on masque !
+        return false;
       }
     }
     
-    // Sécurité : si en base c'est déjà marqué Payé
-    const isPaye = appt.projectStatus === "Payé" || appt.cr7e0_etatdessin === "Payé";
-    return !isPaye;
+    return appt.projectStatus !== "Payé";
   });
 
   const firstName = user?.name ? user.name.split(' ')[0] : 'Florent';
@@ -109,6 +105,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
   
   // 💰 CALCULS FINANCIERS
   const monthEntries = appointments.filter((appt: any) => (appt.rawDate || 0) >= startOfMonth && (appt.rawDate || 0) <= endOfMonth);
+  
   const totalRevenue = monthEntries.reduce((acc: number, curr: any) => acc + (curr.total || 0), 0);
   const collected = monthEntries.filter((e: any) => (e.rawDate || 0) < today).reduce((acc: number, curr: any) => acc + (curr.total || 0), 0);
   const upcoming = monthEntries.filter((e: any) => (e.rawDate || 0) >= today).reduce((acc: number, curr: any) => acc + (curr.total || 0), 0);
@@ -160,7 +157,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                   <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-bold text-lg border border-blue-500/20 shrink-0"><PenTool size={20} /></div>
                   <div className="min-w-0">
                     <h4 className="font-semibold text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date || 'À définir'}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time || '14:00'}</span></span></div>
+                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
                   </div>
                 </div>
                 <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-xs text-gray-500 truncate w-full mt-1">{appt.projectRecap || 'Aucun détail'}</p></div>
@@ -196,7 +193,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                     <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 font-bold text-lg border border-orange-500/20 shrink-0">{appt.client.charAt(0)}</div>
                     <div className="min-w-0">
                       <h4 className="font-semibold text-lg group-hover:text-orange-500 transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date || 'À définir'}</span></span></div>
+                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-orange-500 leading-tight">{appt.price}</p></div>
@@ -224,7 +221,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                     <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-amber-500 font-bold text-lg border border-white/10 shrink-0">{appt.client.charAt(0)}</div>
                     <div className="min-w-0">
                       <h4 className="font-semibold text-lg group-hover:text-amber-500 transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date || 'À définir'}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time || '14:00'}</span></span></div>
+                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-amber-500 leading-tight">{appt.price}</p></div>
@@ -250,7 +247,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                   <div className="w-12 h-12 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 font-bold text-lg border border-rose-500/20 shrink-0"><Receipt size={20} /></div>
                   <div className="min-w-0">
                     <h4 className="font-semibold text-lg group-hover:text-rose-500 transition-colors truncate">{appt.client}</h4>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date || 'Date passée'}</span></span></div>
+                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
                   </div>
                 </div>
                 <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-rose-500 leading-tight">{appt.price}</p></div>
@@ -263,69 +260,65 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
       )}
 
       {/* --- SECTION : PROCHAINS RENDEZ-VOUS --- */}
-<section>
-  <div className="flex justify-between items-center mb-6">
-    <div className="flex items-center space-x-3">
-      <div className="w-1 h-6 bg-lilas rounded-full" />
-      <h3 className="text-xl md:text-2xl font-bold tracking-tight">Prochains Rendez-vous</h3>
-    </div>
-    {upcomingAppointments.length > 5 && (
-      <button 
-        onClick={() => setShowAllAppointments(!showAllAppointments)} 
-        className="text-lilas text-sm font-medium hover:underline flex items-center space-x-1"
-      >
-        <span>{showAllAppointments ? 'Réduire' : 'Voir tout'}</span>
-        {showAllAppointments ? <ChevronDown size={14} className="rotate-180" /> : <ChevronRight size={14} />}
-      </button>
-    )}
-  </div>
-  <div className="space-y-4">
-    {upcomingAppointments.length === 0 ? (
-      <div className="glass-card p-12 text-center text-gray-500">Aucun rendez-vous à venir trouvé.</div>
-    ) : (
-      displayedAppointments.map((appt: any, i: number) => {
-        // Suppression du badge de statut ici
-        return (
-          <motion.div 
-            key={appt.id} 
-            initial={{ opacity: 0, x: -20 }} 
-            animate={{ opacity: 1, x: 0 }} 
-            transition={{ delay: 0.3 + (i * 0.1) }} 
-            onClick={() => onSelectAppointment(appt)} 
-            // On passe de 4 colonnes à 3 sur desktop pour un meilleur alignement
-            className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group"
-          >
-            <div className="flex items-center space-x-5">
-              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-lilas font-bold text-lg border border-white/10 shrink-0">
-                {appt.client.charAt(0)}
-              </div>
-              <div className="min-w-0">
-                <h4 className="font-semibold text-lg group-hover:text-lilas transition-colors truncate">{appt.client}</h4>
-                <div className="flex items-center space-x-3 text-sm text-gray-400">
-                  <span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date || 'À définir'}</span></span>
-                  <span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time || '14:00'}</span></span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex flex-col items-end text-right">
-              <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
-              <p className="text-sm md:text-lg font-bold text-lilas leading-tight">{appt.price}</p>
-            </div>
+      <section>
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center space-x-3">
+            <div className="w-1 h-6 bg-lilas rounded-full" />
+            <h3 className="text-xl md:text-2xl font-bold tracking-tight">Prochains Rendez-vous</h3>
+          </div>
+          {upcomingAppointments.length > 5 && (
+            <button 
+              onClick={() => setShowAllAppointments(!showAllAppointments)} 
+              className="text-lilas text-sm font-medium hover:underline flex items-center space-x-1"
+            >
+              <span>{showAllAppointments ? 'Réduire' : 'Voir tout'}</span>
+              {showAllAppointments ? <ChevronDown size={14} className="rotate-180" /> : <ChevronRight size={14} />}
+            </button>
+          )}
+        </div>
+        <div className="space-y-4">
+          {upcomingAppointments.length === 0 ? (
+            <div className="glass-card p-12 text-center text-gray-500">Aucun rendez-vous à venir trouvé.</div>
+          ) : (
+            displayedAppointments.map((appt: any, i: number) => {
+              return (
+                <motion.div 
+                  key={appt.id} 
+                  initial={{ opacity: 0, x: -20 }} 
+                  animate={{ opacity: 1, x: 0 }} 
+                  transition={{ delay: 0.3 + (i * 0.1) }} 
+                  onClick={() => onSelectAppointment(appt)} 
+                  className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-center space-x-5">
+                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-lilas font-bold text-lg border border-white/10 shrink-0">
+                      {appt.client.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-semibold text-lg group-hover:text-lilas transition-colors truncate">{appt.client}</h4>
+                      <div className="flex items-center space-x-3 text-sm text-gray-400">
+                        <span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span>
+                        <span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-col items-end text-right">
+                    <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
+                    <p className="text-sm md:text-lg font-bold text-lilas leading-tight">{appt.price}</p>
+                  </div>
 
-            {/* La colonne du badge statut a été retirée */}
-
-            <div className="hidden sm:flex justify-end">
-              <button className="p-2 text-gray-500 hover:text-white transition-colors">
-                <MoreVertical size={20} />
-              </button>
-            </div>
-          </motion.div>
-        );
-      })
-    )}
-  </div>
-</section>
+                  <div className="hidden sm:flex justify-end">
+                    <button className="p-2 text-gray-500 hover:text-white transition-colors">
+                      <MoreVertical size={20} />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })
+          )}
+        </div>
+      </section>
     </motion.div>
   );
 };

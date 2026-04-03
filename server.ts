@@ -422,97 +422,19 @@ async function startServer() {
 
 
   app.get("/api/appointments", async (req, res) => {
-    try {
-      const result = await pool.query(`
-        SELECT 
-          id,
-          id as cr7e0_gestiontatouageid, 
-          client_name as client,
-          client_name as cr7e0_nomclient, 
-          client_email as clientEmail,
-          client_email as cr7e0_email, 
-          client_phone as phone,
-          client_phone as cr7e0_telephone, 
-          appointment_date as date,
-          appointment_date as cr7e0_daterdv, 
-          style,
-          style as cr7e0_typederdv, 
-          total_price as total,
-          total_price as cr7e0_tariftattoo, 
-          deposit_amount as depositAmount,
-          deposit_amount as cr7e0_montantacompte, 
-          deposit_status as deposit,
-          deposit_status as cr7e0_acompte, 
-          abby_deposit_id as cr7e0_abby_acompte_id,
-          abby_final_id as cr7e0_abby_facture_id,
-          abby_bdc_id as cr7e0_abby_bdc_id,
-          project_status,
-          project_recap,
-          location,
-          size,
-          instagram
-        FROM appointments 
-        ORDER BY appointment_date DESC
-      `);
-
-      const cleanedRows = result.rows.map(row => {
-        const hasBdc = row.cr7e0_abby_bdc_id && row.cr7e0_abby_bdc_id.trim() !== "";
-        const hasAcompteId = row.cr7e0_abby_acompte_id && row.cr7e0_abby_acompte_id.trim() !== "";
-        const hasFinalId = row.cr7e0_abby_facture_id && row.cr7e0_abby_facture_id.trim() !== "";
-        
-        const isTattoo = row.style === "Flash" || row.style === "Projet perso";
-        const isDispensed = row.deposit === "Dispensé";
-        const depositPaid = row.deposit === "Oui" || isDispensed;
-        const isPast = new Date(row.date) < new Date();
-        
-        let controlStatus = "Ok"; 
-        
-        if (isTattoo) {
-            if (depositPaid) {
-                controlStatus = "Ok";
-            } else if (hasBdc) {
-                controlStatus = "Acompte";
-            } else {
-                controlStatus = "Acompte + BDC";
-            }
-        }
-
-        let dashboardCategory = "À venir";
-
-        const hasMissingDocs = !hasBdc || (!hasAcompteId && !isDispensed) || !hasFinalId;
-
-        if (isTattoo && !isPast && hasMissingDocs) {
-            dashboardCategory = "Vérifier facturation";
-        } else if (controlStatus !== "Ok" && !isPast) {
-            dashboardCategory = "Dossiers à finaliser";
-        } else if (isPast && (!hasFinalId || row.project_status !== "Payé")) {
-            dashboardCategory = "Factures à encaisser";
-        } else if (isPast) {
-            dashboardCategory = "Archives";
-        }
-
-        return {
-          ...row,
-          total: Number(row.total) || 0,
-          depositAmount: Number(row.depositAmount) || 0,
-          cr7e0_tariftattoo: Number(row.cr7e0_tariftattoo) || 0,
-          cr7e0_montantacompte: Number(row.cr7e0_montantacompte) || 0,
-          cr7e0_bondecommande: hasBdc ? "Edité" : "À faire",
-          controle: controlStatus,
-          dashboardCategory: dashboardCategory, 
-          projectStatus: row.project_status || "Inconnu",
-          projectRecap: row.project_recap || "",
-          cr7e0_etatdessin: row.project_status || "Inconnu",
-          cr7e0_recapitulatifprojet: row.project_recap || ""
-        };
-      });
-
-      res.json(cleanedRows);
-    } catch (error: any) {
-      console.error("❌ Erreur lecture locale:", error.message);
-      res.status(500).json({ error: "Erreur lecture base de données." });
-    }
-  });
+  try {
+    // On récupère TOUTES les colonnes de Postgres telles quelles
+    const result = await pool.query(`
+      SELECT * FROM appointments ORDER BY appointment_date DESC
+    `);
+    
+    // On envoie le tableau brut, sans aucune traduction Dataverse
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error("Erreur GET Appointments:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
 
   app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
   app.get('/api/appointments/:id/check-consent', (req, res) => { res.json({ exists: false }); });
@@ -785,6 +707,47 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
       res.status(500).json({ error: "Erreur lors de la récupération du PDF Abby" });
     }
   });
+
+  app.post("/api/abby/sync", async (req, res) => {
+  try {
+    const abbyApi = getAbbyAxiosClient();
+    if (!abbyApi) {
+      return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
+    }
+
+    // 1. Récupération de tous les documents récents sur Abby
+    const response = await abbyApi.get('/v2/billings');
+    const documents = response.data?.data || response.data || [];
+
+    // 2. On filtre pour ne garder que ceux qui sont payés/acceptés
+    const paidStatuses = ['paid', 'signed', 'accepted', 'encaissé'];
+    let updateCount = 0;
+
+    for (const doc of documents) {
+      if (paidStatuses.includes(doc.status)) {
+        
+        // Si c'est un ID d'acompte, on passe l'acompte à "Oui"
+        const updateAcompte = await pool.query(
+          `UPDATE appointments SET deposit_status = 'Oui' WHERE abby_deposit_id = $1 AND deposit_status != 'Oui'`,
+          [doc.id]
+        );
+        updateCount += updateAcompte.rowCount || 0;
+
+        // Si c'est un ID de facture finale, on passe le statut à "Payé"
+        const updateFacture = await pool.query(
+          `UPDATE appointments SET project_status = 'Payé' WHERE abby_final_id = $1 AND project_status != 'Payé'`,
+          [doc.id]
+        );
+        updateCount += updateFacture.rowCount || 0;
+      }
+    }
+
+    res.json({ success: true, updated: updateCount });
+  } catch (error: any) {
+    console.error("❌ Erreur lors de la Synchro Abby globale:", error.message);
+    res.status(500).json({ success: false, error: "Erreur de synchronisation Abby" });
+  }
+});
 
   app.all("/api/*", (req, res) => {
     console.error(`[404] Route introuvable bloquée : ${req.method} ${req.path}`);

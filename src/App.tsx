@@ -132,54 +132,53 @@ export default function App() {
 
       if (!apptsRes.ok || apptsData.error) throw new Error(`Rendez-vous: ${apptsData.details || apptsData.error}`);
 
+      // 🎯 MAPPING POSTGRESQL (Plus aucune trace de Dataverse)
       const mappedAppts = (apptsData || []).map((appt: any) => {
-        const clientObj = appt.cr7e0_ficheclient || {};
-        let clientName = clientObj.cr7e0_nomclient || appt.cr7e0_nomclient || clientObj.cr7e0_nomduclient || appt.cr7e0_nomduclient || clientObj.cr7e0_nom || appt.cr7e0_nom || clientObj.cr7e0_name || appt.cr7e0_name || 'Client Inconnu';
+        let clientName = appt.client_name || 'Client Inconnu';
         clientName = clientName.split(' ').map((word: string) => word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : '').join(' ');
 
-        const dateStr = appt.cr7e0_daterdv;
+        const dateStr = appt.appointment_date;
         const rawDate = dateStr ? new Date(dateStr).getTime() : 0;
         const dateObj = dateStr ? new Date(dateStr) : null;
         const isValid = dateObj instanceof Date && !isNaN(dateObj.getTime());
         
-        const depositLabel = appt['cr7e0_acompte@OData.Community.Display.V1.FormattedValue'] || { "129690000": "Oui", "129690001": "Non", "129690002": "Dispensé" }[String(appt.cr7e0_acompte)] || 'Non';
-        const tattooType = appt['cr7e0_typederdv@OData.Community.Display.V1.FormattedValue'] || { "129690000": "Flash", "129690001": "Projet perso", "129690002": "Retouches", "129690003": "RDV Préparatoire", "129690004": "Event", "129690005": "Cadeau" }[String(appt.cr7e0_typederdv)] || appt.cr7e0_typederdv || 'Tatouage';
+        const depositLabel = appt.deposit_status || 'Non';
+        const tattooType = appt.style || 'Tatouage';
         const isTimeOff = (tattooType || '').toLowerCase().includes('congé') || (tattooType || '').toLowerCase().includes('timeoff') || (tattooType || '').toLowerCase().includes('indisponibilité') || (clientName || '').toLowerCase().includes('congé');
-        const orderFormLabel = appt['cr7e0_boncommande@OData.Community.Display.V1.FormattedValue'] || { "129690000": "Édité", "129690001": "Non édité", "129690002": "Dispensé" }[String(appt.cr7e0_boncommande)] || 'Non édité';
 
         return {
-          id: appt.cr7e0_gestiontatouageid || appt.id,
+          id: appt.id,
           client: clientName,
-          clientEmail: appt.cr7e0_email || '',
-          phone: appt.cr7e0_telephone || '',
-          instagram: appt.cr7e0_instagram || '',
+          clientEmail: appt.client_email || '',
+          phone: appt.client_phone || '',
+          instagram: appt.instagram || '',
           date: isValid ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date à définir',
           time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : (isTimeOff ? 'Journée' : ''),
           rawDate,
           style: tattooType,
-          total: appt.cr7e0_tariftattoo || 0,
+          total: Number(appt.total_price) || 0,
           deposit: depositLabel,
           hasDeposit: depositLabel === 'Oui',
-          depositAmount: appt.cr7e0_montantacompte || 0,
-          orderForm: orderFormLabel,
-          location: appt.cr7e0_emplacement || '',
-          projectRecap: appt.cr7e0_recapitulatifprojet || '',
-          size: appt.cr7e0_taille || '',
+          depositAmount: Number(appt.deposit_amount) || 0,
+          orderForm: 'Non édité', // Calculé localement désormais
+          location: appt.location || '',
+          projectRecap: appt.project_recap || '',
+          size: appt.size || '',
           status: depositLabel === 'Oui' ? 'Payé' : 'Confirmé',
           method: 'N/A',
-          price: `${appt.cr7e0_tariftattoo || 0} €`,
+          price: `${appt.total_price || 0} €`,
           isTimeOff,
-          projectStatus: appt.cr7e0_etatdessin || 'À dessiner',
+          projectStatus: appt.project_status || 'À dessiner',
           
           // LIENS ABBY
-          abbyBdcId: appt.cr7e0_abby_bdc_id || null,
-          abbyAcompteId: appt.cr7e0_abby_acompte_id || null,
-          abbyFactureId: appt.cr7e0_abby_facture_id || null
+          abbyBdcId: appt.abby_bdc_id || null,
+          abbyAcompteId: appt.abby_deposit_id || null,
+          abbyFactureId: appt.abby_final_id || null
         };
       });
 
       const clientMap = new Map();
-      mappedAppts.forEach(appt => {
+      mappedAppts.forEach((appt: any) => {
         if (appt.isTimeOff) return;
         const email = (appt.clientEmail || "").toLowerCase().trim();
         const key = email ? email : appt.client.toLowerCase().trim();
@@ -291,6 +290,7 @@ export default function App() {
         loading={loading} 
         fetchData={fetchData} 
         handleLogout={handleLogout}
+        apiFetch={apiFetch}
       />
 
       {/* CONTENU PRINCIPAL */}

@@ -68,19 +68,19 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
       const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
 
       // PAYLOAD PROPRE POUR POSTGRESQL (Plus de cr7e0 ni de codes chiffres)
-      const createPayload: any = {
+      const createPayload = {
         client_name: clientName,
         client_email: clientEmail,
-        date: dateTime.toISOString(),
-        total: parseFloat(formData.total.toString()),
+        appointment_date: dateTime.toISOString(),
+        total_price: parseFloat(formData.total.toString()),
         deposit_status: formData.deposit,
         deposit_amount: parseFloat(formData.depositAmount.toString()),
         style: formData.style,
-        order_form: formData.orderForm,
         location: formData.location,
         project_recap: formData.projectRecap,
         size: formData.size,
-        project_status: needsDrawing ? 'À dessiner' : 'Non nécessaire'
+        project_status: needsDrawing ? 'À dessiner' : 'Non nécessaire',
+        instagram: "" // Ajout pour éviter les erreurs SQL
       };
 
       const response = await apiFetch('/api/appointments', {

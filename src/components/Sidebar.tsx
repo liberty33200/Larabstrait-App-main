@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LayoutDashboard, Calendar, Wallet, FileText, Users, Settings, 
@@ -20,8 +20,31 @@ const SidebarItem = ({ icon: Icon, label, active = false, onClick }: any) => (
 
 export const Sidebar = ({ 
   activeTab, navigateTo, isMobileMenuOpen, setIsMobileMenuOpen, 
-  isEventsOpen, setIsEventsOpen, setShowKiosk, loading, fetchData, handleLogout 
+  isEventsOpen, setIsEventsOpen, setShowKiosk, loading, fetchData, handleLogout, apiFetch 
 }: any) => {
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    setIsMobileMenuOpen(false);
+    
+    // 1. Demande au serveur de vérifier les paiements sur Abby et de MAJ le NAS
+    if (apiFetch) {
+      try {
+        await apiFetch('/api/abby/sync', { method: 'POST' });
+      } catch (err) {
+        console.error("Erreur de synchronisation Abby:", err);
+      }
+    }
+
+    // 2. Recharge les rendez-vous avec les données fraîches
+    if (fetchData) {
+      await fetchData();
+    }
+    
+    setIsSyncing(false);
+  };
+
   return (
     <aside className={`fixed inset-0 z-[60] md:relative md:inset-auto w-full md:w-64 border-r border-white/5 p-6 pt-6 flex flex-col bg-dark-bg transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
       <div className="flex items-center justify-between mb-10 md:mb-10 px-2">
@@ -59,8 +82,9 @@ export const Sidebar = ({
       </nav>
 
       <div className="pt-6 border-t border-white/5 space-y-2 mt-4">
-        <button onClick={() => { fetchData(); setIsMobileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all">
-          <RefreshCw size={20} className={loading ? "animate-spin" : ""} /><span className="font-medium">Synchroniser</span>
+        <button onClick={handleSync} disabled={isSyncing || loading} className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all disabled:opacity-50">
+          <RefreshCw size={20} className={(isSyncing || loading) ? "animate-spin text-lilas" : ""} />
+          <span className="font-medium">{(isSyncing || loading) ? "Synchro..." : "Synchroniser"}</span>
         </button>
         <SidebarItem icon={LogOut} label="Déconnexion" onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }} />
       </div>

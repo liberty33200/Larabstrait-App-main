@@ -376,21 +376,25 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     return t * 0.25;
   };
   
-  // ICI : On garde strictement ton format de date de test pour éviter le crash !
-  const [formData, setFormData] = useState({
-    date: appointment.rawDate ? new Date(appointment.rawDate).toISOString().split('T')[0] : '',
-    time: appointment.time || '14:00',
+const [formData, setFormData] = useState({
+    date: appointment.appointment_date ? new Date(appointment.appointment_date).toISOString().split('T')[0] : '',
+    time: appointment.appointment_date ? new Date(appointment.appointment_date).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}) : '14:00',
     style: appointment.style || '',
-    total: appointment.total || 0,
-    deposit: appointment.deposit || 'Non',
-    depositAmount: appointment.deposit === 'Dispensé' ? 0 : (appointment.depositAmount || calculateDefaultDeposit(appointment.total || 0)),
-    status: appointment.status || 'Confirmé',
+    total: appointment.total_price || 0,
+    deposit: appointment.deposit_status || 'Non',
+    depositAmount: appointment.deposit_status === 'Dispensé' ? 0 : (appointment.deposit_amount || calculateDefaultDeposit(appointment.total_price || 0)),
     location: appointment.location || '',
-    projectRecap: appointment.projectRecap || '',
+    projectRecap: appointment.project_recap || '',
     size: appointment.size || '',
-    projectStatus: appointment.projectStatus || 'À dessiner',
-    phone: appointment.phone || '',
+    projectStatus: appointment.project_status || 'À dessiner',
+    phone: appointment.client_phone || '',
     instagram: appointment.instagram || ''
+  });
+
+const [abbyIds, setAbbyIds] = useState({
+    bdc: appointment.abby_bdc_id || '',
+    deposit: appointment.abby_deposit_id || '',
+    final: appointment.abby_final_id || ''
   });
 
   const [saving, setSaving] = useState(false);
@@ -610,18 +614,18 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
       const dateTime = new Date(`${formData.date}T${formData.time}`);
 
       // Envoi du payload compatible PostgreSQL
-      const updatePayload: any = {
-        cr7e0_daterdv: dateTime.toISOString(), 
-        cr7e0_tariftattoo: parseFloat(formData.total.toString()),
-        cr7e0_acompte: formData.deposit, // Le backend lira "Oui", "Non", "Dispensé"
-        cr7e0_montantacompte: parseFloat(formData.depositAmount.toString()),
-        cr7e0_typederdv: formData.style,
+     const updatePayload = {
+        appointment_date: dateTime.toISOString(), 
+        total_price: parseFloat(formData.total.toString()),
+        deposit_status: formData.deposit, 
+        deposit_amount: parseFloat(formData.depositAmount.toString()),
+        style: formData.style,
         location: formData.location, 
-        cr7e0_recapitulatifprojet: formData.projectRecap,
+        project_recap: formData.projectRecap,
         size: formData.size, 
-        cr7e0_etatdessin: formData.projectStatus,
-        cr7e0_telephone: formData.phone,
-        cr7e0_instagram: formData.instagram
+        project_status: formData.projectStatus,
+        client_phone: formData.phone,
+        instagram: formData.instagram
       };
 
       const response = await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
