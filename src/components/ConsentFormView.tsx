@@ -6,15 +6,12 @@ import { motion } from 'motion/react';
 interface ConsentFormViewProps {
   clientName?: string;
   onClose: () => void;
-  // On précise à TypeScript que onSave peut être une promesse (async)
   onSave: (signatureDataUrl: string, formData: any) => Promise<void> | void; 
 }
 
 export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "Client", onClose, onSave }) => {
   const sigCanvas = useRef<any>(null);
   const [isLuEtApprouve, setIsLuEtApprouve] = useState(false);
-  
-  // NOUVEAU : L'état qui gère l'animation du bouton
   const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle');
 
   const [medicalAnswers, setMedicalAnswers] = useState({
@@ -30,7 +27,6 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
     sigCanvas.current?.clear();
   };
 
-  // NOUVEAU : handleSave devient asynchrone pour attendre le serveur
   const handleSave = async () => {
     if (sigCanvas.current?.isEmpty()) {
       alert("Veuillez signer dans l'encadré avant de valider.");
@@ -41,31 +37,22 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
       return;
     }
     
-    setStatus('saving'); // Le bouton passe en mode chargement
+    setStatus('saving'); 
     
     try {
       const signatureData = sigCanvas.current.getCanvas().toDataURL('image/png');
-      
-      // On attend que App.tsx génère le PDF et l'envoie au NAS/Serveur
       await onSave(signatureData, medicalAnswers);
-      
-      // Si on arrive ici, pas d'erreur (pas de throw catch)
       setStatus('success');
-      
-      // On attend 1.5 seconde pour voir l'animation, puis on ferme le formulaire
       setTimeout(() => {
         onClose();
       }, 1500);
-      
     } catch (error) {
-      // Si une erreur remonte de App.tsx, on remet le bouton à zéro
       setStatus('idle');
     }
   };
 
   return (
     <>
-      {/* ÉCRAN DE BLOCAGE PAYSAGE */}
       <div className="fixed inset-0 z-[10000] bg-zinc-950 flex-col items-center justify-center text-center p-8 hidden [@media(pointer:coarse)_and_(orientation:landscape)]:flex">
         <SmartphoneNfc size={64} className="text-lilas mb-6 animate-pulse" />
         <h2 className="text-3xl font-bold text-white mb-4">Veuillez tourner l'appareil</h2>
@@ -74,7 +61,6 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
         </p>
       </div>
 
-      {/* FENÊTRE PRINCIPALE */}
       <div className="fixed inset-0 z-[9999] bg-zinc-950 overflow-y-auto flex flex-col items-center justify-start p-4 md:p-8 [@media(pointer:coarse)_and_(orientation:landscape)]:hidden">
         
         <div className="w-full max-w-2xl bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-800 p-6 md:p-10 relative shrink-0 my-auto">
@@ -158,7 +144,6 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
             </div>
           </div>
 
-          {/* NOUVEAU : Bouton Animé */}
           <motion.button
             animate={status === 'success' ? { scale: [1, 1.05, 1], transition: { duration: 0.4 } } : {}}
             onClick={handleSave}
@@ -190,7 +175,6 @@ export const ConsentFormView: React.FC<ConsentFormViewProps> = ({ clientName = "
               </>
             )}
           </motion.button>
-
         </div>
       </div>
     </>

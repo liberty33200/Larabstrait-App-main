@@ -19,7 +19,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     }
   }, [apiFetch]);
 
-  // 🎯 Calcul du statut basé sur les propriétés propres fournies par App.tsx
+  // 🎯 Statut basé sur les propriétés propres de App.tsx
   const getStatusBadge = (appt: any) => {
     const style = (appt.style || "").toLowerCase();
     const isTattoo = style === "flash" || style === "projet perso";
@@ -42,7 +42,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime();
   
-  // Séparation Futur / Passé utilisant la variable rawDate calculée par App.tsx
   const upcomingAppointments = appointments
     .filter((appt: any) => (appt.rawDate || 0) >= today)
     .sort((a: any, b: any) => (a.rawDate || 0) - (b.rawDate || 0));
@@ -69,7 +68,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     return !hasBdc || (!hasDeposit && !isDispensed) || !hasFinal;
   });
 
-  // 🗂️ 3. DOSSIERS À FINALISER (Acompte non réglé)
+  // 🗂️ 3. DOSSIERS À FINALISER
   const toFinalize = upcomingAppointments.filter((appt: any) => {
     const badge = getStatusBadge(appt).label;
     if (badge === "Ok") return false;
@@ -103,7 +102,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
   const firstName = user?.name ? user.name.split(' ')[0] : 'Florent';
   const displayedAppointments = showAllAppointments ? upcomingAppointments : upcomingAppointments.slice(0, 5);
   
-  // 💰 CALCULS FINANCIERS
   const monthEntries = appointments.filter((appt: any) => (appt.rawDate || 0) >= startOfMonth && (appt.rawDate || 0) <= endOfMonth);
   
   const totalRevenue = monthEntries.reduce((acc: number, curr: any) => acc + (curr.total || 0), 0);
@@ -144,7 +142,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         ))}
       </div>
 
-      {/* --- SECTION : DESSINS À PRÉPARER --- */}
       {drawingsToDo.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
@@ -169,7 +166,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         </section>
       )}
 
-      {/* --- NOUVELLE SECTION : VÉRIFIER FACTURATION --- */}
       {toVerifyBilling.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
@@ -206,7 +202,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         </section>
       )}
 
-      {/* --- SECTION : DOSSIERS À FINALISER --- */}
       {toFinalize.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
@@ -234,7 +229,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         </section>
       )}
 
-      {/* --- SECTION : FACTURES À ENCAISSER --- */}
       {toEncash.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
@@ -259,7 +253,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         </section>
       )}
 
-      {/* --- SECTION : PROCHAINS RENDEZ-VOUS --- */}
       <section>
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center space-x-3">

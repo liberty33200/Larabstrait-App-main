@@ -67,8 +67,8 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
       const dateTime = new Date(`${formData.date}T${formData.time}`);
       const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
 
-      // PAYLOAD PROPRE POUR POSTGRESQL (Plus de cr7e0 ni de codes chiffres)
-      const createPayload = {
+      // 🎯 PAYLOAD PROPRE POSTGRESQL (Strictement les bons noms de colonnes)
+      const createPayload: any = {
         client_name: clientName,
         client_email: clientEmail,
         appointment_date: dateTime.toISOString(),
@@ -79,8 +79,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
         location: formData.location,
         project_recap: formData.projectRecap,
         size: formData.size,
-        project_status: needsDrawing ? 'À dessiner' : 'Non nécessaire',
-        instagram: "" // Ajout pour éviter les erreurs SQL
+        project_status: needsDrawing ? 'À dessiner' : 'Non nécessaire'
       };
 
       const response = await apiFetch('/api/appointments', {
@@ -263,7 +262,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Tarif Total (€)</label>
               <input 
                 type="number" 
-                value={formData.total || ''}
+                value={formData.total === 0 ? '' : formData.total}
                 onChange={(e) => handleTotalChange(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
               />
@@ -286,7 +285,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                 <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Montant Acompte (€)</label>
                 <input 
                   type="number" 
-                  value={formData.depositAmount}
+                  value={formData.depositAmount === 0 ? '' : formData.depositAmount}
                   onChange={(e) => setFormData({...formData, depositAmount: parseFloat(e.target.value) || 0})}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                 />

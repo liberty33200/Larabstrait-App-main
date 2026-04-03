@@ -20,7 +20,7 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
         .filter((f: any) => !f.available && f.client_data)
         .map((f: any) => ({ ...f, client: JSON.parse(f.client_data) }))
         .filter((f: any) => f.client.status !== 'completed')
-        .sort((a: any, b: any) => a.client.time.localeCompare(b.client.time));
+        .sort((a: any, b: any) => (a.client.time || '').localeCompare(b.client.time || ''));
       
       setQueue(reserved);
     } catch (error) { console.error(error); }
@@ -49,16 +49,17 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
   };
 
  const handleCancelReservation = async () => {
-    if (!window.confirm("⚠️ Attention : Cela va annuler le RDV, SUPPRIMER LA LIGNE DANS DATAVERSE, et remettre le dessin dispo. Confirmer ?")) return;
+    if (!window.confirm("⚠️ Attention : Cela va annuler le RDV, SUPPRIMER LA LIGNE DANS LA BASE, et remettre le dessin dispo. Confirmer ?")) return;
     
     try {
-      // 1. SUPPRESSION DANS DATAVERSE (si on a bien l'ID)
-      const dvId = selectedItem.client.dataverseId;
-      if (dvId) {
-        await apiFetch(`/api/appointments/${dvId}`, { method: 'DELETE' });
-        console.log("🗑️ RDV supprimé de Dataverse !");
+      // 1. SUPPRESSION DANS LA BASE POSTGRESQL
+      // (Rétro-compatibilité si c'est un vieux flash qui traîne avec "dataverseId")
+      const apptId = selectedItem.client.appointmentId || selectedItem.client.dataverseId;
+      if (apptId) {
+        await apiFetch(`/api/appointments/${apptId}`, { method: 'DELETE' });
+        console.log("🗑️ RDV supprimé de la base de données !");
       } else {
-        console.warn("⚠️ Pas d'ID Dataverse trouvé, suppression locale uniquement.");
+        console.warn("⚠️ Pas d'ID de RDV trouvé, suppression du blocage local uniquement.");
       }
 
       // 2. Libération du flash sur le NAS local
@@ -75,8 +76,6 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
     }
   };
 
-  // --- FONCTION TERMINER SIMPLIFIÉE ---
-  // (Le RDV est déjà dans Dataverse, on le marque juste 'completed' localement)
   const handleComplete = async () => {
     if (!window.confirm("Le tatouage est terminé ? Ce RDV disparaîtra de la file d'attente.")) return;
     
@@ -168,7 +167,6 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
                 </div>
               </div>
 
-              {/* LES 3 BOUTONS D'ACTION */}
               <div className="flex flex-col gap-3 pt-4 border-t border-zinc-800/50">
                 <button onClick={handleComplete} className="w-full bg-emerald-500 text-black font-black py-4 rounded-2xl flex items-center justify-center gap-2 uppercase text-xs tracking-widest shadow-xl hover:bg-emerald-400 transition-all">
                   <CheckCircle2 size={18}/> Terminer & Exporter

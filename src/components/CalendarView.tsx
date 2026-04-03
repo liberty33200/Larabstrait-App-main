@@ -116,9 +116,8 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
     })
   ];
 
-  // --- NOUVEAU : Formatage intelligent des heures pour les congés
   const formatTimeOffTime = (off: any) => {
-    if (off.time && off.time !== '00:00') return off.time; // S'il a une heure Dataverse valide
+    if (off.time && off.time !== '00:00') return off.time; // Heure valide trouvée
 
     const start = new Date(off.start);
     const end = new Date(off.end);
@@ -282,7 +281,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
                       </div>
                       
                       <div className="flex-1 space-y-1 overflow-y-auto max-h-[500px] pr-1 custom-scrollbar">
-                        {/* Style des congés en vue semaine plus transparent/discret */}
                         {dayTimeOff.map((off: any, idx: number) => (
                           <div key={`off-${idx}`} className="p-1.5 bg-red-500/5 border border-dashed border-red-500/20 rounded-lg text-[9px] text-red-400/70 font-bold opacity-70">
                             {off.title || off.client || 'Congé'}
@@ -339,7 +337,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
               <div className="mb-4 space-y-2">
                 <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-widest px-1">Indisponibilités</p>
                 {selectedDayTimeOff.map((off: any, idx: number) => (
-                  // Nouveau design pour les congés dans la barre latérale droite : plus transparent
                   <div key={off.id || `off-${idx}`} className="p-3 bg-red-500/5 border border-dashed border-red-500/20 rounded-xl flex items-center space-x-3 opacity-80 hover:opacity-100 transition-opacity">
                     <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
                       <Plane size={16} />
@@ -392,7 +389,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
                 );
               })
             ) : (
-              // Si aucun rdv (les congés sont affichés au-dessus, donc on vérifie s'il y a des rdv)
               selectedDayAppointments.length === 0 && selectedDayTimeOff.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-center space-y-4 py-12 opacity-20">
                   <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center">

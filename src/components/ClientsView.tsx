@@ -122,7 +122,7 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
         totalSpent,
         phone: latestPhone,
         instagram: latestInsta,
-        appointments: clientAppts // On stocke les RDV pour l'update Dataverse
+        appointments: clientAppts // On stocke les RDV pour l'update Postgres
       };
     });
   }, [clients, appointments]);
@@ -145,14 +145,14 @@ export const ClientsView = ({ clients, appointments, onSelectAppointment, apiFet
     if (!selectedClient || !apiFetch) return;
     setSaving(true);
     try {
-      // Pour synchroniser la fiche client, on met à jour les coordonnées sur TOUS ses rendez-vous dans Dataverse
+      // 🎯 MODIFICATION ICI : On utilise les noms Postgres pour la mise à jour
       const updatePromises = selectedClient.appointments.map((app: any) => 
         apiFetch(`/api/appointments/${app.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            cr7e0_telephone: editForm.phone,
-            cr7e0_instagram: editForm.instagram
+            client_phone: editForm.phone,
+            instagram: editForm.instagram
           })
         })
       );

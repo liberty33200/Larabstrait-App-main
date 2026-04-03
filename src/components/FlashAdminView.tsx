@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Image as ImageIcon, X, UploadCloud, CheckCircle2, XCircle, Clock, Ruler, Tag, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Image as ImageIcon, X, UploadCloud, CheckCircle2, Clock, Ruler, Tag, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export const FlashAdminView = () => {
@@ -31,7 +31,6 @@ export const FlashAdminView = () => {
     setTitle(flash.title || '');
     setPrice(flash.price || '');
     setSize(flash.size || '');
-    // FIX : On ajoute une sécurité au cas où duration est undefined ou null
     setDuration(flash.duration ? flash.duration.toString() : '60');
     setFile(null);
     setShowForm(true);
@@ -85,7 +84,6 @@ export const FlashAdminView = () => {
 
   return (
     <div className="p-4 md:p-8 lg:p-10 text-white font-sans max-w-7xl mx-auto">
-      {/* HEADER : Empilé sur iPhone, ligne sur iPad */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-10 gap-6">
         <div>
           <h1 className="text-2xl md:text-4xl font-black text-white flex items-center space-x-3 uppercase tracking-tighter">
@@ -102,14 +100,12 @@ export const FlashAdminView = () => {
         </button>
       </div>
 
-      {/* GRILLE : 1 col (iPhone) / 2 col (iPad Mini) / 3 col (iPad Pro) / 4 col (Desktop) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {flashes.map(flash => (
           <motion.div key={flash.id} layout className="bg-zinc-900/50 border border-zinc-800 rounded-[2rem] overflow-hidden group flex flex-col backdrop-blur-sm">
             <div className="aspect-[3/4] relative bg-black/40">
               <img src={`/api/flashes/images/${flash.image_filename}`} alt={flash.title} className="w-full h-full object-contain p-6" />
               
-              {/* BOUTONS ACTIONS : Toujours visibles sur mobile/iPad, au survol sur PC */}
               <div className="absolute top-4 right-4 flex flex-col space-y-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all duration-300">
                 <button onClick={() => openEditForm(flash)} className="bg-white text-black p-3 rounded-2xl shadow-2xl hover:bg-lilas transition-colors active:scale-90">
                   <Edit2 size={18} />
@@ -149,7 +145,6 @@ export const FlashAdminView = () => {
         ))}
       </div>
 
-      {/* MODAL : Plein écran sur iPhone, centré sur iPad */}
       <AnimatePresence>
         {showForm && (
           <div className="fixed inset-0 z-[9999] bg-black/95 flex items-center justify-center p-0 sm:p-4 backdrop-blur-xl">

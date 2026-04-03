@@ -6,7 +6,6 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, X, Menu, RefreshCw, AlertCircle } from 'lucide-react';
 
-// --- IMPORTATION DES VUES ---
 import { QueueView } from './components/QueueView';
 import { FlashAdminView } from './components/FlashAdminView';
 import { KioskView } from './components/KioskView';
@@ -24,7 +23,6 @@ import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 
 export default function App() {
-  // === 1. ETATS ===
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showKiosk, setShowKiosk] = useState(false);
   const [isEventsOpen, setIsEventsOpen] = useState(false);
@@ -56,7 +54,6 @@ export default function App() {
     { startMonth: '2026-01', rent: 450, rate: 0.263 },
   ].sort((a, b) => b.startMonth.localeCompare(a.startMonth)));
 
-  // === 2. NOTIFICATIONS PUSH ===
   const urlBase64ToUint8Array = (base64String: string) => {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -101,7 +98,6 @@ export default function App() {
     } catch (error: any) { alert("Erreur réseau lors de l'envoi du test."); }
   };
 
-  // === 3. LOGIQUE API & AUTHENTIFICATION ===
   const apiFetch = async (url: string, options: any = {}) => {
     const token = localStorage.getItem('larabstrait_token');
     const isIframe = window.self !== window.top;
@@ -132,7 +128,7 @@ export default function App() {
 
       if (!apptsRes.ok || apptsData.error) throw new Error(`Rendez-vous: ${apptsData.details || apptsData.error}`);
 
-      // 🎯 MAPPING POSTGRESQL (Plus aucune trace de Dataverse)
+      // 🎯 LE COEUR DE LA MIGRATION : On lit PostgreSQL et on crée un objet propre
       const mappedAppts = (apptsData || []).map((appt: any) => {
         let clientName = appt.client_name || 'Client Inconnu';
         clientName = clientName.split(' ').map((word: string) => word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : '').join(' ');
@@ -153,24 +149,23 @@ export default function App() {
           phone: appt.client_phone || '',
           instagram: appt.instagram || '',
           date: isValid ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date à définir',
-          time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : (isTimeOff ? 'Journée' : ''),
-          rawDate,
+          time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h') : (isTimeOff ? 'Journée' : ''),
+          rawDate, // Utilisé pour le tri
+          appointment_date: appt.appointment_date, // Conservé pour les formulaires d'édition
           style: tattooType,
           total: Number(appt.total_price) || 0,
           deposit: depositLabel,
           hasDeposit: depositLabel === 'Oui',
           depositAmount: Number(appt.deposit_amount) || 0,
-          orderForm: 'Non édité', // Calculé localement désormais
           location: appt.location || '',
           projectRecap: appt.project_recap || '',
           size: appt.size || '',
           status: depositLabel === 'Oui' ? 'Payé' : 'Confirmé',
           method: 'N/A',
-          price: `${appt.total_price || 0} €`,
+          price: `${Number(appt.total_price) || 0} €`,
           isTimeOff,
           projectStatus: appt.project_status || 'À dessiner',
-          
-          // LIENS ABBY
+          // IDs Abby
           abbyBdcId: appt.abby_bdc_id || null,
           abbyAcompteId: appt.abby_deposit_id || null,
           abbyFactureId: appt.abby_final_id || null
@@ -182,7 +177,15 @@ export default function App() {
         if (appt.isTimeOff) return;
         const email = (appt.clientEmail || "").toLowerCase().trim();
         const key = email ? email : appt.client.toLowerCase().trim();
-        if (!clientMap.has(key)) clientMap.set(key, { id: key, firstName: appt.client, lastName: '', email: appt.clientEmail, displayName: appt.client });
+        if (!clientMap.has(key)) {
+          clientMap.set(key, { 
+            id: key, 
+            firstName: appt.client, 
+            lastName: '', 
+            email: appt.clientEmail, 
+            displayName: appt.client 
+          });
+        }
       });
 
       setAppointments(mappedAppts);
@@ -241,7 +244,6 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // === 4. FILTRES ===
   const filteredAppointments = appointments.filter((appt: any) => {
     if (appt.isTimeOff) return false;
     if (!searchQuery) return true;
@@ -269,7 +271,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-dark-bg text-gray-100 overflow-hidden flex-col md:flex-row">
-      {/* HEADER MOBILE */}
       <div className="md:hidden flex items-center justify-between p-4 border-b border-white/5 bg-dark-bg/80 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => navigateTo('dashboard')}>
           <div className="w-8 h-8 bg-lilas rounded-lg flex items-center justify-center"><span className="text-black font-bold text-lg">LA</span></div>
@@ -278,7 +279,6 @@ export default function App() {
         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-gray-400 hover:text-white transition-colors">{isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}</button>
       </div>
 
-      {/* SIDEBAR EXTERNALISÉE */}
       <Sidebar 
         activeTab={activeTab} 
         navigateTo={navigateTo} 
@@ -293,7 +293,6 @@ export default function App() {
         apiFetch={apiFetch}
       />
 
-      {/* CONTENU PRINCIPAL */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8">
         {!selectedAppointment && (
           <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -310,7 +309,6 @@ export default function App() {
 
         {error && <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 flex items-center space-x-3"><AlertCircle size={20} /><span>{error}</span></div>}
 
-        {/* ROUTEUR */}
         <AnimatePresence mode="wait">
           {showCreateForm ? (
             <CreateAppointmentView key="create" clients={filteredClients} onBack={() => setShowCreateForm(false)} onCreated={() => { setShowCreateForm(false); fetchData(); }} apiFetch={apiFetch} />

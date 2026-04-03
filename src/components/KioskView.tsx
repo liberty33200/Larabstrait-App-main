@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, ArrowLeft, CheckCircle2, Image as ImageIcon, Loader2, Calendar as CalendarIcon, Clock } from 'lucide-react';
 
-// 1. ON A BIEN AJOUTÉ apiFetch ICI
 export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch: any }) => {
   const [step, setStep] = useState<'catalog' | 'datetime' | 'form' | 'success'>('catalog');
   const [selectedFlash, setSelectedFlash] = useState<any>(null);
@@ -70,7 +69,7 @@ export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // --- CRÉATION DATAVERSE DEPUIS LE KIOSK ---
+      // --- CRÉATION POSTGRES DEPUIS LE KIOSK ---
       const [year, month, day] = selectedDate.split('-'); 
       const [hour, min] = selectedTime.split(':');
       const startDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(min));
@@ -78,29 +77,34 @@ export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch
       const rawPrice = selectedFlash.price.toString().replace(/[^0-9.,]/g, '').replace(',', '.');
       const numericPrice = parseFloat(rawPrice) || 0;
 
+      // 🎯 NOMS DE COLONNES PROPRES
       const appointmentData = {
-        cr7e0_nomclient: formData.name,
-        cr7e0_email: formData.email,
-        cr7e0_daterdv: startDate.toISOString(),
-        cr7e0_telephone: formData.phone,
-        cr7e0_tariftattoo: numericPrice
+        client_name: formData.name,
+        client_email: formData.email,
+        appointment_date: startDate.toISOString(),
+        client_phone: formData.phone,
+        total_price: numericPrice,
+        style: "Flash",
+        project_recap: selectedFlash.title,
+        size: selectedFlash.size || "",
+        instagram: formData.insta
       };
 
-      // 1. On envoie à Microsoft (déclenche ton mail Power Automate)
-      const dvResponse = await apiFetch('/api/appointments', {
+      // 1. On envoie au serveur NAS Postgres
+      const dbResponse = await apiFetch('/api/appointments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(appointmentData)
       });
 
-      // 2. On récupère la réponse de Dataverse pour avoir l'ID du RDV
-      let dataverseId = null;
-      if (dvResponse.ok) {
-        const dvData = await dvResponse.json();       
-        dataverseId = dvData.id || dvData.cr7e0_gestiontatouageid || null;
+      // 2. On récupère la réponse pour avoir l'ID du RDV généré
+      let appointmentId = null;
+      if (dbResponse.ok) {
+        const dbData = await dbResponse.json();       
+        appointmentId = dbData.id || null;
       }
 
-      // 3. On bloque le flash sur le NAS et on sauvegarde l'ID Dataverse
+      // 3. On bloque le flash sur le NAS et on sauvegarde l'ID propre
       await fetch(`/api/flashes/${selectedFlash.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -111,7 +115,7 @@ export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch
             date: selectedDate, 
             time: selectedTime, 
             flashTitle: selectedFlash.title,
-            dataverseId: dataverseId // 👈 ON SAUVEGARDE L'ID ICI
+            appointmentId: appointmentId // 👈 ON UTILISE CE NOM MAINTENANT
           }
         })
       });
@@ -124,7 +128,6 @@ export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch
     }
   };
 
-  // LE FAMEUX RETURN QUI AVAIT DISPARU EST BIEN LÀ 👇
   return (
     <div className="fixed inset-0 z-[10000] bg-zinc-950 text-white flex flex-col font-sans overflow-hidden">
       {/* HEADER */}

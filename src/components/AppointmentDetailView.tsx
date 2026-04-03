@@ -197,14 +197,15 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
 
       const pdfBase64 = doc.output('datauristring');
 
+      // 🎯 MODIFICATION : Sauvegarde Postgres sans Dataverse
       if (form.phone !== appointment.phone || form.instagram !== appointment.instagram) {
          try {
            await apiFetch(`/api/appointments/${appointment.id}`, {
              method: 'PATCH',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({
-               cr7e0_telephone: form.phone,
-               cr7e0_instagram: form.instagram
+               client_phone: form.phone,
+               instagram: form.instagram
              })
            });
          } catch (e) {}
@@ -216,7 +217,7 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
         body: JSON.stringify({
           pdfData: pdfBase64,
           clientName: appointment.client,
-          appointmentDate: appointment.date
+          appointmentDate: appointment.appointment_date
         })
       });
 
@@ -376,27 +377,30 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     return t * 0.25;
   };
   
-const [formData, setFormData] = useState({
+  // 🎯 DONNÉES SÉCURISÉES : On lit les propriétés générées par App.tsx
+  const [formData, setFormData] = useState({
     date: appointment.appointment_date ? new Date(appointment.appointment_date).toISOString().split('T')[0] : '',
-    time: appointment.appointment_date ? new Date(appointment.appointment_date).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}) : '14:00',
+    time: appointment.appointment_date ? new Date(appointment.appointment_date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '14:00',
     style: appointment.style || '',
-    total: appointment.total_price || 0,
-    deposit: appointment.deposit_status || 'Non',
-    depositAmount: appointment.deposit_status === 'Dispensé' ? 0 : (appointment.deposit_amount || calculateDefaultDeposit(appointment.total_price || 0)),
+    total: appointment.total || 0,
+    deposit: appointment.deposit || 'Non',
+    depositAmount: appointment.deposit === 'Dispensé' ? 0 : (appointment.depositAmount || calculateDefaultDeposit(appointment.total || 0)),
+    status: appointment.status || 'Confirmé',
     location: appointment.location || '',
-    projectRecap: appointment.project_recap || '',
+    projectRecap: appointment.projectRecap || '',
     size: appointment.size || '',
-    projectStatus: appointment.project_status || 'À dessiner',
-    phone: appointment.client_phone || '',
+    projectStatus: appointment.projectStatus || 'À dessiner',
+    phone: appointment.phone || '',
     instagram: appointment.instagram || ''
   });
 
-const [abbyIds, setAbbyIds] = useState({
-    bdc: appointment.abby_bdc_id || '',
-    deposit: appointment.abby_deposit_id || '',
-    final: appointment.abby_final_id || ''
+  const [abbyIds, setAbbyIds] = useState({
+    bdc: appointment.abbyBdcId || '',
+    deposit: appointment.abbyAcompteId || '',
+    final: appointment.abbyFactureId || ''
   });
 
+  const [savingAbbyIds, setSavingAbbyIds] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -405,14 +409,12 @@ const [abbyIds, setAbbyIds] = useState({
   const [hasConsent, setHasConsent] = useState(false);
   const [showConsentModal, setShowConsentModal] = useState(false);
 
-  // --- NOUVEAUX ETATS POUR L'AUTOMATISATION ABBY ---
   const [isCreating, setIsCreating] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isLoadingDocs, setIsLoadingDocs] = useState(true);
 
-  // Récupération des IDs Abby (Compatible Dataverse et Postgres)
-  const abbyAc = appointment.cr7e0_abby_acompte_id || appointment.abbyAcompteId || appointment.abby_deposit_id;
-  const abbyFact = appointment.cr7e0_abby_facture_id || appointment.abbyFactureId || appointment.abby_final_id;
+  const abbyAc = appointment.abbyAcompteId;
+  const abbyFact = appointment.abbyFactureId;
 
   const [docState, setDocState] = useState({
     depositInvoice: 'none',
@@ -447,8 +449,6 @@ const [abbyIds, setAbbyIds] = useState({
 
   useEffect(() => {
     let isMounted = true;
-
-    // --- INITIALISATION AUTOMATIQUE ABBY ---
     const initAbbyAndDocs = async () => {
       if (!isMounted) return;
       setIsLoadingDocs(true);
@@ -483,7 +483,7 @@ const [abbyIds, setAbbyIds] = useState({
     checkConsent();
 
     return () => { isMounted = false; };
-  }, [appointment.id, abbyAc, abbyFact]); // Dépendances mises à jour
+  }, [appointment.id, abbyAc, abbyFact]);
 
   const handleSendPdf = async () => {
     if (!appointment.clientEmail) { alert("Ce client n'a pas d'adresse email renseignée."); return; }
@@ -511,7 +511,7 @@ const [abbyIds, setAbbyIds] = useState({
 
   const currentControlStatus = isEditing ? getControlStatus({ style: formData.style, deposit: formData.deposit, total: formData.total }) : getControlStatus(appointment);
 
-  // --- NOUVELLE FONCTION DE MISE A JOUR SILENCIEUSE ---
+  // 🎯 SAUVEGARDE SILENCIEUSE
   const silentUpdateDataverse = async (payload: any) => {
     try {
       await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -519,7 +519,6 @@ const [abbyIds, setAbbyIds] = useState({
     } catch (e) {}
   };
 
-  // --- NOUVELLES FONCTIONS ABBY AUTO ---
   const handleCreateAbbyDocument = async (type: string) => {
     if (!hasApiKey) {
       alert("Configurez votre clé API Abby.");
@@ -530,46 +529,28 @@ const [abbyIds, setAbbyIds] = useState({
     setError(null);
 
     try {
-      const appointmentToSend = {
-        ...appointment,
-        depositAmount: appointment.deposit === 'Dispensé' ? 0 : formData.depositAmount
-      };
-
       const res = await apiFetch('/api/abby/create-document', {
         method: 'POST',
-        body: JSON.stringify({ appointment: appointmentToSend, type }),
+        body: JSON.stringify({ appointment: { ...appointment, depositAmount: formData.depositAmount, total: formData.total }, type }),
         headers: { 'Content-Type': 'application/json' }
       });
 
-      let data;
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        data = await res.json();
-      } else {
-        data = { message: await res.text() };
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.error || data?.message || `Erreur création ${type}.`);
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Erreur création ${type}.`);
 
       const newAbbyId = data?.data?.id || data?.id;
-
-      if (!newAbbyId) {
-        throw new Error("Réponse Abby invalide : identifiant manquant.");
-      }
+      if (!newAbbyId) throw new Error("Réponse Abby invalide.");
 
       if (type === "Facture d'acompte") {
         setDocState((prev) => ({ ...prev, depositInvoice: 'created' }));
-        await silentUpdateDataverse({ cr7e0_abby_acompte_id: newAbbyId, deposit_amount: formData.depositAmount });
+        await silentUpdateDataverse({ abby_deposit_id: newAbbyId, deposit_amount: formData.depositAmount });
       } else if (type === 'Facture finale') {
         setDocState((prev) => ({ ...prev, finalInvoice: 'created' }));
-        await silentUpdateDataverse({ cr7e0_abby_facture_id: newAbbyId });
+        await silentUpdateDataverse({ abby_final_id: newAbbyId });
       }
     } catch (err: any) {
-      const message = err?.message || `Erreur création ${type}.`;
-      setError(message);
-      alert(message);
+      setError(err.message);
+      alert(err.message);
     } finally {
       setIsCreating(null);
     }
@@ -586,21 +567,16 @@ const [abbyIds, setAbbyIds] = useState({
       });
       
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Erreur lors de l'encaissement.");
-      }
+      if (!res.ok) throw new Error(data.error || "Erreur lors de l'encaissement.");
       
       if (type === "Facture d'acompte") {
         setDocState(prev => ({ ...prev, depositInvoice: 'paid' }));
         setFormData(prev => ({ ...prev, deposit: 'Oui' }));
-        await silentUpdateDataverse({ cr7e0_acompte: 'Oui', deposit_status: 'Oui' }); 
+        await silentUpdateDataverse({ deposit_status: 'Oui' }); 
       } else if (type === 'Facture finale') {
         setDocState(prev => ({ ...prev, finalInvoice: 'paid' }));
       }
-      
       alert("Encaissé avec succès !");
-
     } catch (err: any) { 
       alert(err.message || "Erreur lors de l'encaissement."); 
     } finally { 
@@ -608,13 +584,12 @@ const [abbyIds, setAbbyIds] = useState({
     }
   };
 
+  // 🎯 SAUVEGARDE PRINCIPALE AVEC NOMS POSTGRESQL
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
       const dateTime = new Date(`${formData.date}T${formData.time}`);
-
-      // Envoi du payload compatible PostgreSQL
-     const updatePayload = {
+      const updatePayload: any = {
         appointment_date: dateTime.toISOString(), 
         total_price: parseFloat(formData.total.toString()),
         deposit_status: formData.deposit, 
@@ -631,7 +606,32 @@ const [abbyIds, setAbbyIds] = useState({
       const response = await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
       if (!response.ok) throw new Error("Erreur de mise à jour");
       onUpdate();
+      setIsEditing(false);
     } catch (err: any) { setError(err.message); } finally { setSaving(false); }
+  };
+
+  const handleSaveAbbyIds = async () => {
+    setSavingAbbyIds(true);
+    setError(null);
+    try {
+      const payload = {
+        abby_bdc_id: abbyIds.bdc,
+        abby_deposit_id: abbyIds.deposit,
+        abby_final_id: abbyIds.final
+      };
+      const response = await apiFetch(`/api/appointments/${appointment.id}`, { 
+        method: 'PATCH', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload) 
+      });
+      if (!response.ok) throw new Error("Erreur.");
+      alert("Liaisons Abby enregistrées !");
+      onUpdate();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingAbbyIds(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -639,7 +639,7 @@ const [abbyIds, setAbbyIds] = useState({
     try {
       const response = await apiFetch(`/api/appointments/${appointment.id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error("Erreur suppression");
-      onUpdate();
+      onBack();
     } catch (err: any) { setError(err.message); setSaving(false); }
   };
 
@@ -677,7 +677,7 @@ const [abbyIds, setAbbyIds] = useState({
             <div className="glass-card p-8">
               <div className="flex items-start space-x-6 mb-8">
                 <div className="w-20 h-20 rounded-full bg-lilas/10 flex items-center justify-center text-lilas text-3xl font-bold border-2 border-lilas/20 shrink-0">
-                  {appointment.client.charAt(0)}
+                  {appointment.client?.charAt(0)}
                 </div>
                 <div className="w-full">
                   <h2 className="text-3xl font-bold mb-1">{appointment.client}</h2>
@@ -713,11 +713,11 @@ const [abbyIds, setAbbyIds] = useState({
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date</label>
-                  {isEditing ? <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{appointment.date || new Date(appointment.rawDate).toLocaleDateString('fr-FR')}</p>}
+                  {isEditing ? <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{appointment.date}</p>}
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Heure</label>
-                  {isEditing ? <input type="time" value={formData.time} onChange={(e) => setFormData({...formData, time: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{appointment.time}</p>}
+                  {isEditing ? <input type="time" value={formData.time} onChange={(e) => setFormData({...formData, time: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{formData.time}</p>}
                 </div>
               </div>
             </div>
@@ -813,7 +813,7 @@ const [abbyIds, setAbbyIds] = useState({
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">€</span>
                     </div>
-                  ) : <span className="font-medium">{appointment.deposit === 'Dispensé' ? 0 : (appointment.depositAmount || calculateDefaultDeposit(appointment.total))}€</span>}
+                  ) : <span className="font-medium">{appointment.depositAmount}€</span>}
                 </div>
 
                 <div className="pt-6 border-t border-white/5 space-y-3">
@@ -908,6 +908,32 @@ const [abbyIds, setAbbyIds] = useState({
                 )}
               </div>
             )}
+
+            {/* --- 🎯 ZONE LIAISON MANUELLE --- */}
+            <div className="glass-card p-6 border-t-4 border-emerald-500/50">
+              <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4">
+                <Link size={12} /><span>Liaisons Abby (Manuelles)</span>
+              </label>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">ID Bon de commande (Devis)</label>
+                  <input type="text" value={abbyIds.bdc} onChange={(e) => setAbbyIds({...abbyIds, bdc: e.target.value})} placeholder="ex: 123e4..." className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">ID Facture d'acompte</label>
+                  <input type="text" value={abbyIds.deposit} onChange={(e) => setAbbyIds({...abbyIds, deposit: e.target.value})} placeholder="ex: 987f..." className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">ID Facture finale</label>
+                  <input type="text" value={abbyIds.final} onChange={(e) => setAbbyIds({...abbyIds, final: e.target.value})} placeholder="ex: 456a..." className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono" />
+                </div>
+                <button onClick={handleSaveAbbyIds} disabled={savingAbbyIds} className="w-full mt-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-sm font-bold flex items-center justify-center space-x-2">
+                  {savingAbbyIds ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                  <span>Sauvegarder les ID Abby</span>
+                </button>
+              </div>
+            </div>
 
             <div className="glass-card p-6 bg-rose-500/5 border border-rose-500/10">
               <button onClick={() => setShowDeleteConfirm(true)} disabled={saving} className="w-full flex items-center justify-center space-x-2 text-rose-400 hover:text-rose-300 transition-colors py-2 disabled:opacity-50">

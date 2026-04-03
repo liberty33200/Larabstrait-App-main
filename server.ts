@@ -14,12 +14,6 @@ import pkg from 'pg';
 import Database from "better-sqlite3";
 import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
-import {
-  fetchDataverse,
-  updateDataverse,
-  createDataverse,
-  deleteDataverse
-} from "./dataverseService";
 
 dotenv.config();
 const { Pool } = pkg;
@@ -421,89 +415,16 @@ async function startServer() {
   app.post("/api/auth/logout", (req: any, res) => req.session.destroy(() => res.json({ success: true })));
 
 
+  // ==========================================
+  // --- NOUVELLES ROUTES PURES POSTGRESQL ---
+  // ==========================================
   app.get("/api/appointments", async (req, res) => {
-  try {
-    // On récupère TOUTES les colonnes de Postgres telles quelles
-    const result = await pool.query(`
-      SELECT * FROM appointments ORDER BY appointment_date DESC
-    `);
-    
-    // On envoie le tableau brut, sans aucune traduction Dataverse
-    res.json(result.rows);
-  } catch (error: any) {
-    console.error("Erreur GET Appointments:", error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-  app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
-  app.get('/api/appointments/:id/check-consent', (req, res) => { res.json({ exists: false }); });
-
-  app.patch("/api/appointments/:id", async (req, res) => {
     try {
-      const data = req.body;
-      const updates = [];
-      const values = [];
-      let i = 1;
-
-      // Compatibilité : on prend en charge les nouvelles clés propres, ainsi que les anciennes
-      const client_name = data.client_name ?? data.cr7e0_nomclient;
-      if (client_name !== undefined) { updates.push(`client_name = $${i++}`); values.push(client_name); }
-
-      const client_email = data.client_email ?? data.cr7e0_email;
-      if (client_email !== undefined) { updates.push(`client_email = $${i++}`); values.push(client_email); }
-
-      const client_phone = data.phone ?? data.cr7e0_telephone;
-      if (client_phone !== undefined) { updates.push(`client_phone = $${i++}`); values.push(client_phone); }
-
-      const appointment_date = data.date ?? data.cr7e0_daterdv;
-      if (appointment_date !== undefined) { updates.push(`appointment_date = $${i++}`); values.push(appointment_date); }
-
-      const style = data.style ?? data.cr7e0_typederdv;
-      if (style !== undefined) { updates.push(`style = $${i++}`); values.push(style); }
-
-      const total_price = data.total ?? data.cr7e0_tariftattoo;
-      if (total_price !== undefined) { updates.push(`total_price = $${i++}`); values.push(total_price); }
-
-      const deposit_amount = data.deposit_amount ?? data.cr7e0_montantacompte;
-      if (deposit_amount !== undefined) { updates.push(`deposit_amount = $${i++}`); values.push(deposit_amount); }
-
-      const deposit_status = data.deposit_status ?? data.cr7e0_acompte;
-      if (deposit_status !== undefined) { updates.push(`deposit_status = $${i++}`); values.push(deposit_status); }
-
-      const abby_deposit_id = data.abby_deposit_id ?? data.cr7e0_abby_acompte_id;
-      if (abby_deposit_id !== undefined) { updates.push(`abby_deposit_id = $${i++}`); values.push(abby_deposit_id); }
-
-      const abby_final_id = data.abby_final_id ?? data.cr7e0_abby_facture_id;
-      if (abby_final_id !== undefined) { updates.push(`abby_final_id = $${i++}`); values.push(abby_final_id); }
-
-      const abby_bdc_id = data.abby_bdc_id ?? data.cr7e0_abby_bdc_id;
-      if (abby_bdc_id !== undefined) { updates.push(`abby_bdc_id = $${i++}`); values.push(abby_bdc_id); }
-
-      const project_status = data.project_status ?? data.cr7e0_etatdessin;
-      if (project_status !== undefined) { updates.push(`project_status = $${i++}`); values.push(project_status); }
-
-      const project_recap = data.project_recap ?? data.cr7e0_recapitulatifprojet;
-      if (project_recap !== undefined) { updates.push(`project_recap = $${i++}`); values.push(project_recap); }
-
-      const location = data.location;
-      if (location !== undefined) { updates.push(`location = $${i++}`); values.push(location); }
-
-      const size = data.size;
-      if (size !== undefined) { updates.push(`size = $${i++}`); values.push(size); }
-
-      const instagram = data.instagram ?? data.cr7e0_instagram;
-      if (instagram !== undefined) { updates.push(`instagram = $${i++}`); values.push(instagram); }
-
-      if (updates.length > 0) {
-        values.push(req.params.id);
-        const query = `UPDATE appointments SET ${updates.join(', ')} WHERE id = $${i}`;
-        await pool.query(query, values);
-      }
-      res.json({ success: true });
-    } catch (error: any) { 
-      console.error("❌ Erreur Update Postgres:", error.message);
-      res.status(500).json({ error: error.message }); 
+      const result = await pool.query(`SELECT * FROM appointments ORDER BY appointment_date DESC`);
+      res.json(result.rows);
+    } catch (error: any) {
+      console.error("Erreur GET Appointments:", error.message);
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -524,10 +445,10 @@ async function startServer() {
           id, 
           data.client_name || "Inconnu", 
           data.client_email || "", 
-          data.phone || "",
-          data.date || new Date().toISOString(), 
+          data.client_phone || "",
+          data.appointment_date || new Date().toISOString(), 
           data.style || "Flash", 
-          data.total || 0,
+          data.total_price || 0,
           data.deposit_amount || 0, 
           data.deposit_status || "Non", 
           data.project_status || "À dessiner",
@@ -545,6 +466,44 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/appointments/:id", async (req, res) => {
+    try {
+      const data = req.body;
+      const updates = [];
+      const values = [];
+      let i = 1;
+
+      // On met à jour uniquement si la donnée est fournie
+      if (data.client_name !== undefined) { updates.push(`client_name = $${i++}`); values.push(data.client_name); }
+      if (data.client_email !== undefined) { updates.push(`client_email = $${i++}`); values.push(data.client_email); }
+      if (data.client_phone !== undefined) { updates.push(`client_phone = $${i++}`); values.push(data.client_phone); }
+      if (data.appointment_date !== undefined) { updates.push(`appointment_date = $${i++}`); values.push(data.appointment_date); }
+      if (data.style !== undefined) { updates.push(`style = $${i++}`); values.push(data.style); }
+      if (data.total_price !== undefined) { updates.push(`total_price = $${i++}`); values.push(data.total_price); }
+      if (data.deposit_amount !== undefined) { updates.push(`deposit_amount = $${i++}`); values.push(data.deposit_amount); }
+      if (data.deposit_status !== undefined) { updates.push(`deposit_status = $${i++}`); values.push(data.deposit_status); }
+      if (data.project_status !== undefined) { updates.push(`project_status = $${i++}`); values.push(data.project_status); }
+      if (data.project_recap !== undefined) { updates.push(`project_recap = $${i++}`); values.push(data.project_recap); }
+      if (data.location !== undefined) { updates.push(`location = $${i++}`); values.push(data.location); }
+      if (data.size !== undefined) { updates.push(`size = $${i++}`); values.push(data.size); }
+      if (data.instagram !== undefined) { updates.push(`instagram = $${i++}`); values.push(data.instagram); }
+      
+      if (data.abby_bdc_id !== undefined) { updates.push(`abby_bdc_id = $${i++}`); values.push(data.abby_bdc_id); }
+      if (data.abby_deposit_id !== undefined) { updates.push(`abby_deposit_id = $${i++}`); values.push(data.abby_deposit_id); }
+      if (data.abby_final_id !== undefined) { updates.push(`abby_final_id = $${i++}`); values.push(data.abby_final_id); }
+
+      if (updates.length > 0) {
+        values.push(req.params.id);
+        const query = `UPDATE appointments SET ${updates.join(', ')} WHERE id = $${i}`;
+        await pool.query(query, values);
+      }
+      res.json({ success: true });
+    } catch (error: any) { 
+      console.error("❌ Erreur Update Postgres:", error.message);
+      res.status(500).json({ error: error.message }); 
+    }
+  });
+
   app.delete("/api/appointments/:id", async (req, res) => {
     try {
       await pool.query(`DELETE FROM appointments WHERE id = $1`, [req.params.id]);
@@ -552,6 +511,8 @@ async function startServer() {
     } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 
+  app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
+  app.get('/api/appointments/:id/check-consent', (req, res) => { res.json({ exists: false }); });
   app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
   app.get("/api/abby/documents", async (req: any, res) => {
@@ -592,7 +553,7 @@ async function startServer() {
     } catch (error: any) { res.status(500).json({ error: "Erreur Abby", details: error.message }); }
   });
 
-  // =========================================================================
+// =========================================================================
 // --- CRÉATEUR DE DOCUMENT (DIRECT ABBY) ---
 // =========================================================================
 app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
@@ -602,36 +563,30 @@ app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
     const abbyApi = getAbbyAxiosClient();
     if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
 
-    // 1. Récupérer ou Créer le client sur Abby
-    const rawName = appointment.client || appointment.client_name || "Client Inconnu";
-    const rawEmail = appointment.clientEmail || appointment.client_email || "";
+    const rawName = appointment.client_name || "Client Inconnu";
+    const rawEmail = appointment.client_email || "";
     const customerId = await getOrCreateAbbyClient(abbyApi, rawName, rawEmail);
 
-    // 2. Calcul du montant de l'acompte
-    const totalAmount = Number(appointment.total || appointment.total_price) || 0;
+    const totalAmount = Number(appointment.total_price) || 0;
     let calculatedAmount = type === "Facture d'acompte" 
       ? (totalAmount <= 200 ? 50 : totalAmount * 0.25)
       : totalAmount;
 
-    // 3. Création du document directement via l'API Abby
-    // On crée un brouillon (draft)
     const abbyResponse = await abbyApi.post("/v2/billings", {
       customerId: customerId,
-      type: type === "Facture d'acompte" ? "invoice" : "invoice", // Abby gère les types via le contenu
+      type: type === "Facture d'acompte" ? "invoice" : "invoice",
       items: [{
-        title: `${type} - Tatouage le ${new Date(appointment.date).toLocaleDateString('fr-FR')}`,
-        price: Math.round(calculatedAmount * 100), // Abby attend des centimes
+        title: `${type} - Tatouage le ${new Date(appointment.appointment_date).toLocaleDateString('fr-FR')}`,
+        price: Math.round(calculatedAmount * 100),
         quantity: 1,
-        vatRate: 0 // Auto-entrepreneur généralement à 0%
+        vatRate: 0 
       }],
       comment: `Lien RDV : ${appointment.id}`
     });
 
     const newAbbyId = abbyResponse.data?.id || abbyResponse.data?.data?.id;
-
     if (!newAbbyId) throw new Error("Abby n'a pas renvoyé d'ID.");
 
-    // 4. Enregistrement immédiat dans PostgreSQL (ton NAS)
     if (type === "Facture d'acompte") {
       await pool.query(
         `UPDATE appointments SET abby_deposit_id = $1, deposit_amount = $2 WHERE id = $3`,
@@ -662,15 +617,12 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
     const abbyApi = getAbbyAxiosClient();
     if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
 
-    // 1. On valide/paye le document sur Abby
-    // Note : Selon l'API Abby, on peut soit créer un paiement, soit changer le status
     await abbyApi.post(`/v2/billings/${abbyDocId}/payments`, {
-      amount: 0, // 0 ici signifie "solde total" dans beaucoup d'APIs, ou mettre le vrai montant
-      paymentMethod: "cash", // ou "card"
+      amount: 0,
+      paymentMethod: "cash",
       paidAt: new Date().toISOString()
     });
 
-    // 2. Mise à jour immédiate de ton NAS
     if (type === "Facture d'acompte") {
       await pool.query(
         `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
@@ -715,25 +667,20 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
       return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
     }
 
-    // 1. Récupération de tous les documents récents sur Abby
     const response = await abbyApi.get('/v2/billings');
     const documents = response.data?.data || response.data || [];
 
-    // 2. On filtre pour ne garder que ceux qui sont payés/acceptés
     const paidStatuses = ['paid', 'signed', 'accepted', 'encaissé'];
     let updateCount = 0;
 
     for (const doc of documents) {
       if (paidStatuses.includes(doc.status)) {
-        
-        // Si c'est un ID d'acompte, on passe l'acompte à "Oui"
         const updateAcompte = await pool.query(
           `UPDATE appointments SET deposit_status = 'Oui' WHERE abby_deposit_id = $1 AND deposit_status != 'Oui'`,
           [doc.id]
         );
         updateCount += updateAcompte.rowCount || 0;
 
-        // Si c'est un ID de facture finale, on passe le statut à "Payé"
         const updateFacture = await pool.query(
           `UPDATE appointments SET project_status = 'Payé' WHERE abby_final_id = $1 AND project_status != 'Payé'`,
           [doc.id]
