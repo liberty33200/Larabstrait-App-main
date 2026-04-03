@@ -10,6 +10,7 @@ import cookieParser from "cookie-parser";
 import * as msal from "@azure/msal-node";
 import webpush from "web-push";
 import multer from "multer";
+import pkg from 'pg';
 import Database from "better-sqlite3";
 import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
@@ -21,6 +22,7 @@ import {
 } from "./dataverseService";
 
 dotenv.config();
+const { Pool } = pkg;
 
 // 1. On s'assure que le dossier "data" existe
 const dataDir = path.join(process.cwd(), 'data');
@@ -36,6 +38,34 @@ if (fs.existsSync(oldDbPath) && !fs.existsSync(newDbPath)) {
 }
 
 const db = new Database(newDbPath);
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: parseInt(process.env.DB_PORT || '5432'),
+});
+
+if (!process.env.DB_PASSWORD || !process.env.DB_HOST) {
+  console.error("❌ ERREUR CRITIQUE : Les informations de connexion à la base de données sont manquantes dans le fichier .env");
+  process.exit(1); 
+}
+
+pool.connect(async (err, client, release) => {
+  if (err) return console.error("❌ Erreur de connexion Postgres:", err.stack);
+  console.log("🐘 Connecté avec succès à PostgreSQL !");
+  
+  // Sécurité : On s'assure que les colonnes ajoutées récemment existent bien dans PostgreSQL
+  try {
+    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS location TEXT`);
+    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS size TEXT`);
+    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS instagram TEXT`);
+  } catch (e) {
+    // Les colonnes existent peut-être déjà, on ignore silencieusement
+  }
+  
+  release();
+});
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
@@ -43,12 +73,10 @@ db.exec(`
     subscription TEXT UNIQUE,
     user_id TEXT
   );
-
   CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT PRIMARY KEY,
     abby_api_key TEXT
   );
-
   CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -56,7 +84,6 @@ db.exec(`
     completed INTEGER DEFAULT 0,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
-
   CREATE TABLE IF NOT EXISTS flashes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -84,7 +111,6 @@ declare module "express-session" { interface SessionData { user: any; } }
 const isProd = process.env.NODE_ENV === "production";
 
 function getUserId(req: any): string { return req.session?.user?.homeAccountId || "anonymous"; }
-
 function getStoredAbbySettings(userId: string) { return db.prepare("SELECT abby_api_key FROM user_settings WHERE user_id = ?").get(userId) as any; }
 
 function getAbbyApiKey(): string {
@@ -99,16 +125,58 @@ function getAbbyAxiosClient(): AxiosInstance | null {
   return axios.create({
     baseURL: "https://api.app-abby.com",
     timeout: 30000,
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" }
   });
 }
 
-function handleAbbyError(err: any, res: any, context: string) {
-  const status = err.response?.status || 500;
-  const errorData = err.response?.data || err.message;
-  console.error(`[Abby Error] ${context}:`, errorData);
-  res.status(status).json({ error: `Erreur Abby (${context})`, details: errorData });
+async function getOrCreateAbbyClient(abbyApi: AxiosInstance, rawName: string, rawEmail: string): Promise<string> {
+  const cleanEmail = (rawEmail || "").trim().toLowerCase();
+  const cleanName = (rawName || "Client Inconnu").replace(/^Client\s+/i, '').trim();
+  
+  const names = cleanName.split(" ");
+  const lastname = names.length > 1 ? names.slice(1).join(" ") : (names[0] || "Inconnu");
+  const firstname = names.length > 1 ? names[0] : "";
+
+  if (cleanEmail) {
+    try {
+      console.log(`🔍 Téléchargement des contacts pour chercher ${cleanEmail}...`);
+      
+      const { data: searchResult } = await abbyApi.get("/contacts", { params: { limit: 100 } });
+      const contactsList = searchResult?.data || searchResult?.docs || searchResult || [];
+      
+      const found = Array.isArray(contactsList) ? contactsList.find((c: any) => {
+        const email1 = c.email ? c.email.toLowerCase().trim() : "";
+        const emailsArray = Array.isArray(c.emails) ? c.emails.map((e:string) => e.toLowerCase().trim()) : [];
+        return email1 === cleanEmail || emailsArray.includes(cleanEmail);
+      }) : null;
+
+      if (found) {
+        console.log(`✅ Client existant trouvé sur Abby ! ID : ${found.id}`);
+        return found.id;
+      }
+    } catch (e: any) {
+      console.error("❌ Le serveur d'Abby n'a pas répondu à la recherche :", e.message);
+      throw new Error("Serveur Abby inaccessible");
+    }
+  }
+
+  console.log(`🆕 Client introuvable en base. Création en cours pour : ${cleanName}...`);
+  try {
+    const { data: newContact } = await abbyApi.post("/contact", {
+      firstname: firstname,
+      lastname: lastname,
+      emails: [cleanEmail]
+    });
+    
+    const newId = newContact?.data?.id || newContact?.id;
+    console.log(`✅ Nouveau client créé ! ID : ${newId}`);
+    return newId;
+  } catch (error: any) {
+    console.error("❌ Échec de la création du client Abby:", error.response?.data || error.message);
+    throw new Error("Impossible de créer le client dans Abby.");
+  }
 }
+
 
 async function startServer() {
   const app = express();
@@ -202,6 +270,38 @@ async function startServer() {
     } catch (error) { res.status(500).json({ error: "Erreur" }); }
   });
 
+  // --- ROUTES REPORTS (SQLite) ---
+  app.get('/api/reports', (req, res) => {
+    try {
+      const reports = db.prepare("SELECT * FROM reports ORDER BY timestamp DESC").all();
+      res.json(reports);
+    } catch (error) {
+      res.status(500).json({ error: "Erreur lors de la récupération des rapports" });
+    }
+  });
+
+  app.post('/api/reports', (req, res) => {
+    try {
+      const { content } = req.body;
+      const userId = getUserId(req);
+      const stmt = db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)");
+      const info = stmt.run(userId, content);
+      res.status(201).json({ success: true, id: info.lastInsertRowid });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur lors de la création du rapport" });
+    }
+  });
+
+  app.patch('/api/reports/:id', (req, res) => {
+    try {
+      const { completed } = req.body;
+      db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(completed ? 1 : 0, req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Erreur lors de la mise à jour du rapport" });
+    }
+  });
+
   app.get('/api/availability', async (req, res) => {
     const { date, duration } = req.query; 
     const flashDur = parseInt(duration as string) || 60;
@@ -225,61 +325,6 @@ async function startServer() {
       }
       res.json(slots);
     } catch (error) { res.status(500).json({ error: "Erreur" }); }
-  });
-
-  app.post('/api/appointments/:id/consent', express.json({ limit: '50mb' }), async (req: any, res) => {
-    const appointmentId = req.params.id;
-    const { pdfData, clientName, appointmentDate } = req.body;
-    const cleanName = clientName ? clientName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_") : "Client";
-    const dateStr = appointmentDate ? appointmentDate.toString().replace(/[\/\.\s]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') : "Date_Inconnue";
-    const fileName = `Consentement_${cleanName}_${dateStr}_${appointmentId}.pdf`;
-
-    try {
-      let userAccountId = req.session?.user?.homeAccountId;
-      if (!userAccountId) {
-        const accounts = await cca.getTokenCache().getAllAccounts();
-        if (accounts.length > 0) userAccountId = accounts[0].homeAccountId;
-        else return res.status(401).json({ error: "Non authentifié" });
-      }
-      const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
-      const authResult = await cca.acquireTokenSilent({ account: account!, scopes: ["Mail.Send"] });
-      const graphToken = authResult.accessToken;
-      let base64Data = pdfData.includes('base64,') ? pdfData.split('base64,')[1] : pdfData;
-      base64Data = base64Data.replace(/\s/g, ''); 
-      const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
-      if (!fs.existsSync(dechargesDir)) fs.mkdirSync(dechargesDir, { recursive: true });
-      fs.writeFileSync(path.join(dechargesDir, fileName), Buffer.from(base64Data, 'base64'));
-
-      const emailPayload = {
-        message: {
-          subject: `🖋️ Décharge signée : ${clientName}`,
-          body: { contentType: "HTML", content: `<p>Bonjour,</p><p>Une nouvelle décharge a été signée par <b>${clientName}</b> pour le RDV du ${dateStr}.</p>` },
-          toRecipients: [{ emailAddress: { address: process.env.EMAIL_STUDIO ? process.env.EMAIL_STUDIO.trim() : "" } }],
-          attachments: [{ "@odata.type": "#microsoft.graph.fileAttachment", name: `Consentement_${cleanName}_${dateStr}.pdf`, contentType: "application/pdf", contentBytes: base64Data }]
-        }
-      };
-      await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, { headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" } });
-      res.json({ success: true });
-    } catch (error: any) { res.status(500).json({ error: "Erreur serveur" }); }
-  });
-
-  app.get('/api/appointments/:id/download-consent', (req, res) => {
-    const appointmentId = req.params.id;
-    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
-    if (!fs.existsSync(dechargesDir)) return res.status(404).send("Dossier vide");
-    const files = fs.readdirSync(dechargesDir);
-    const targetFile = files.find(f => f.includes(appointmentId) && f.endsWith('.pdf'));
-    if (targetFile) res.download(path.join(dechargesDir, targetFile));
-    else res.status(404).json({ error: "Fichier non trouvé" });
-  });
-
-  app.get('/api/appointments/:id/check-consent', (req, res) => {
-    const appointmentId = req.params.id;
-    const dechargesDir = path.join(process.cwd(), 'data', 'decharges');
-    if (!fs.existsSync(dechargesDir)) return res.json({ exists: false });
-    const files = fs.readdirSync(dechargesDir);
-    const exists = files.some(f => f.includes(appointmentId));
-    res.json({ exists });
   });
 
   const sessionSecret = process.env.SESSION_SECRET || "tattoo-studio-secret-v3";
@@ -349,7 +394,6 @@ async function startServer() {
     res.json({ isAuthenticated: !!req.session.user, user: req.session.user || null });
   });
 
-  // RESTAURATION DES ROUTES MANQUANTES
   app.get("/api/auth/callback", (req: any, res) => {
     cca.acquireTokenByCode({ code: req.query.code as string, scopes: ["user.read", "Mail.Send", "Files.Read.All"], redirectUri: getRedirectUri(req) })
       .then((response) => {
@@ -374,299 +418,230 @@ async function startServer() {
   });
 
   app.get("/api/auth/user", (req: any, res) => res.json(req.session.user || null));
-  
   app.post("/api/auth/logout", (req: any, res) => req.session.destroy(() => res.json({ success: true })));
 
-  app.post("/api/appointments/:id/send-pdf", express.json(), async (req: any, res) => {
-    const { clientEmail, clientName } = req.body;
-    const userAccountId = req.session.user?.homeAccountId;
-
-    if (!userAccountId) return res.status(401).json({ error: "Non authentifié" });
-    if (!clientEmail) return res.status(400).json({ error: "Email manquant" });
-
-    try {
-      const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
-      const authResult = await cca.acquireTokenSilent({ account: account!, scopes: ["Mail.Send", "Files.Read.All"] });
-      const graphToken = authResult.accessToken;
-
-      const driveId = "b!vOwzOeuRUUacHKDyHq_WD3KZNAfkK_xAohv1OegSBuqrG8KSnvFLRr_Q7cjhrjGF";
-      const itemId = "01BVWNLSWAWRVG7IFUYNBJIPIAQB6KXFWP"; 
-      
-      const sharepointFileUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`;
-      const pdfResponse = await axios.get(sharepointFileUrl, { headers: { Authorization: `Bearer ${graphToken}` }, responseType: 'arraybuffer' });
-      const pdfBase64 = Buffer.from(pdfResponse.data).toString('base64');
-
-      const emailPayload = {
-        message: {
-          subject: "Larabstrait - Feuille de soins et informations.",
-          body: {
-            contentType: "HTML",
-            content: `
-              <p>Hello !</p>
-              <p>Suite à notre séance voici, ci-joint, la feuille de soin comme convenu avec toutes les consignes à respecter durant la période de cicatrisation.</p>
-              <p>Je reste disponible si besoin.</p>
-              <p>À bientôt et bonne cicatrisation💫</p>
-              <p>Lara - Larabstrait</p>
-            `
-          },
-          toRecipients: [{ emailAddress: { address: clientEmail } }],
-          attachments: [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "Feuille de soins.pdf", contentType: "application/pdf", contentBytes: pdfBase64 }]
-        },
-        saveToSentItems: "true"
-      };
-
-      await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, { headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" } });
-      res.json({ success: true, message: "Email envoyé avec succès" });
-    } catch (error: any) {
-      res.status(500).json({ error: "Erreur d'envoi" });
-    }
-  });
-
-  app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
   app.get("/api/appointments", async (req, res) => {
     try {
-      const data = await fetchDataverse("cr7e0_gestiontatouages");
-      res.json(data);
-    } catch (error: any) { res.status(500).json({ error: error.message }); }
+      const result = await pool.query(`
+        SELECT 
+          id,
+          id as cr7e0_gestiontatouageid, 
+          client_name as client,
+          client_name as cr7e0_nomclient, 
+          client_email as clientEmail,
+          client_email as cr7e0_email, 
+          client_phone as phone,
+          client_phone as cr7e0_telephone, 
+          appointment_date as date,
+          appointment_date as cr7e0_daterdv, 
+          style,
+          style as cr7e0_typederdv, 
+          total_price as total,
+          total_price as cr7e0_tariftattoo, 
+          deposit_amount as depositAmount,
+          deposit_amount as cr7e0_montantacompte, 
+          deposit_status as deposit,
+          deposit_status as cr7e0_acompte, 
+          abby_deposit_id as cr7e0_abby_acompte_id,
+          abby_final_id as cr7e0_abby_facture_id,
+          abby_bdc_id as cr7e0_abby_bdc_id,
+          project_status,
+          project_recap,
+          location,
+          size,
+          instagram
+        FROM appointments 
+        ORDER BY appointment_date DESC
+      `);
+
+      const cleanedRows = result.rows.map(row => {
+        const hasBdc = row.cr7e0_abby_bdc_id && row.cr7e0_abby_bdc_id.trim() !== "";
+        const hasAcompteId = row.cr7e0_abby_acompte_id && row.cr7e0_abby_acompte_id.trim() !== "";
+        const hasFinalId = row.cr7e0_abby_facture_id && row.cr7e0_abby_facture_id.trim() !== "";
+        
+        const isTattoo = row.style === "Flash" || row.style === "Projet perso";
+        const isDispensed = row.deposit === "Dispensé";
+        const depositPaid = row.deposit === "Oui" || isDispensed;
+        const isPast = new Date(row.date) < new Date();
+        
+        let controlStatus = "Ok"; 
+        
+        if (isTattoo) {
+            if (depositPaid) {
+                controlStatus = "Ok";
+            } else if (hasBdc) {
+                controlStatus = "Acompte";
+            } else {
+                controlStatus = "Acompte + BDC";
+            }
+        }
+
+        let dashboardCategory = "À venir";
+
+        const hasMissingDocs = !hasBdc || (!hasAcompteId && !isDispensed) || !hasFinalId;
+
+        if (isTattoo && !isPast && hasMissingDocs) {
+            dashboardCategory = "Vérifier facturation";
+        } else if (controlStatus !== "Ok" && !isPast) {
+            dashboardCategory = "Dossiers à finaliser";
+        } else if (isPast && (!hasFinalId || row.project_status !== "Payé")) {
+            dashboardCategory = "Factures à encaisser";
+        } else if (isPast) {
+            dashboardCategory = "Archives";
+        }
+
+        return {
+          ...row,
+          total: Number(row.total) || 0,
+          depositAmount: Number(row.depositAmount) || 0,
+          cr7e0_tariftattoo: Number(row.cr7e0_tariftattoo) || 0,
+          cr7e0_montantacompte: Number(row.cr7e0_montantacompte) || 0,
+          cr7e0_bondecommande: hasBdc ? "Edité" : "À faire",
+          controle: controlStatus,
+          dashboardCategory: dashboardCategory, 
+          projectStatus: row.project_status || "Inconnu",
+          projectRecap: row.project_recap || "",
+          cr7e0_etatdessin: row.project_status || "Inconnu",
+          cr7e0_recapitulatifprojet: row.project_recap || ""
+        };
+      });
+
+      res.json(cleanedRows);
+    } catch (error: any) {
+      console.error("❌ Erreur lecture locale:", error.message);
+      res.status(500).json({ error: "Erreur lecture base de données." });
+    }
   });
+
+  app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
+  app.get('/api/appointments/:id/check-consent', (req, res) => { res.json({ exists: false }); });
 
   app.patch("/api/appointments/:id", async (req, res) => {
     try {
-      const result = await updateDataverse("cr7e0_gestiontatouages", req.params.id, req.body);
-      res.json({ success: true, data: result });
-    } catch (error: any) { res.status(500).json({ error: error.message }); }
+      const data = req.body;
+      const updates = [];
+      const values = [];
+      let i = 1;
+
+      // Compatibilité : on prend en charge les nouvelles clés propres, ainsi que les anciennes
+      const client_name = data.client_name ?? data.cr7e0_nomclient;
+      if (client_name !== undefined) { updates.push(`client_name = $${i++}`); values.push(client_name); }
+
+      const client_email = data.client_email ?? data.cr7e0_email;
+      if (client_email !== undefined) { updates.push(`client_email = $${i++}`); values.push(client_email); }
+
+      const client_phone = data.phone ?? data.cr7e0_telephone;
+      if (client_phone !== undefined) { updates.push(`client_phone = $${i++}`); values.push(client_phone); }
+
+      const appointment_date = data.date ?? data.cr7e0_daterdv;
+      if (appointment_date !== undefined) { updates.push(`appointment_date = $${i++}`); values.push(appointment_date); }
+
+      const style = data.style ?? data.cr7e0_typederdv;
+      if (style !== undefined) { updates.push(`style = $${i++}`); values.push(style); }
+
+      const total_price = data.total ?? data.cr7e0_tariftattoo;
+      if (total_price !== undefined) { updates.push(`total_price = $${i++}`); values.push(total_price); }
+
+      const deposit_amount = data.deposit_amount ?? data.cr7e0_montantacompte;
+      if (deposit_amount !== undefined) { updates.push(`deposit_amount = $${i++}`); values.push(deposit_amount); }
+
+      const deposit_status = data.deposit_status ?? data.cr7e0_acompte;
+      if (deposit_status !== undefined) { updates.push(`deposit_status = $${i++}`); values.push(deposit_status); }
+
+      const abby_deposit_id = data.abby_deposit_id ?? data.cr7e0_abby_acompte_id;
+      if (abby_deposit_id !== undefined) { updates.push(`abby_deposit_id = $${i++}`); values.push(abby_deposit_id); }
+
+      const abby_final_id = data.abby_final_id ?? data.cr7e0_abby_facture_id;
+      if (abby_final_id !== undefined) { updates.push(`abby_final_id = $${i++}`); values.push(abby_final_id); }
+
+      const abby_bdc_id = data.abby_bdc_id ?? data.cr7e0_abby_bdc_id;
+      if (abby_bdc_id !== undefined) { updates.push(`abby_bdc_id = $${i++}`); values.push(abby_bdc_id); }
+
+      const project_status = data.project_status ?? data.cr7e0_etatdessin;
+      if (project_status !== undefined) { updates.push(`project_status = $${i++}`); values.push(project_status); }
+
+      const project_recap = data.project_recap ?? data.cr7e0_recapitulatifprojet;
+      if (project_recap !== undefined) { updates.push(`project_recap = $${i++}`); values.push(project_recap); }
+
+      const location = data.location;
+      if (location !== undefined) { updates.push(`location = $${i++}`); values.push(location); }
+
+      const size = data.size;
+      if (size !== undefined) { updates.push(`size = $${i++}`); values.push(size); }
+
+      const instagram = data.instagram ?? data.cr7e0_instagram;
+      if (instagram !== undefined) { updates.push(`instagram = $${i++}`); values.push(instagram); }
+
+      if (updates.length > 0) {
+        values.push(req.params.id);
+        const query = `UPDATE appointments SET ${updates.join(', ')} WHERE id = $${i}`;
+        await pool.query(query, values);
+      }
+      res.json({ success: true });
+    } catch (error: any) { 
+      console.error("❌ Erreur Update Postgres:", error.message);
+      res.status(500).json({ error: error.message }); 
+    }
   });
 
   app.post("/api/appointments", express.json(), async (req: any, res) => {
     try {
-      const result = await createDataverse("cr7e0_gestiontatouages", req.body);
-      const clientEmail = req.body.cr7e0_email;
-      const rawDate = req.body.cr7e0_daterdv; 
-      const userAccountId = req.session?.user?.homeAccountId;
-      const isTimeOff = clientEmail === 'conge@larabstrait.fr' || (req.body.cr7e0_nomclient || '').includes('CONGÉ');
+      const id = `local-${Date.now()}`;
+      const data = req.body;
+      
+      const query = `
+          INSERT INTO appointments (
+            id, client_name, client_email, client_phone, appointment_date, 
+            style, total_price, deposit_amount, deposit_status, 
+            project_status, project_recap, location, size, instagram
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `;
 
-      if (clientEmail && userAccountId && rawDate && !isTimeOff) {
-        try {
-          const dateObj = new Date(rawDate);
-          const formattedDate = dateObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-          const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      const values = [
+          id, 
+          data.client_name || "Inconnu", 
+          data.client_email || "", 
+          data.phone || "",
+          data.date || new Date().toISOString(), 
+          data.style || "Flash", 
+          data.total || 0,
+          data.deposit_amount || 0, 
+          data.deposit_status || "Non", 
+          data.project_status || "À dessiner",
+          data.project_recap || "",
+          data.location || "",
+          data.size || "",
+          data.instagram || ""
+      ];
 
-          const account = await cca.getTokenCache().getAccountByHomeId(userAccountId);
-          if (account) {
-            const authResult = await cca.acquireTokenSilent({ account: account, scopes: ["Mail.Send"] });
-            const graphToken = authResult.accessToken;
-            const emailPayload = {
-              message: {
-                subject: `Confirmation de rendez-vous - Larabstrait`,
-                body: {
-                  contentType: "HTML",
-                  content: `<p>Hello !</p><p>Ton rendez-vous du <b>${formattedDate} à ${formattedTime}</b> est bien confirmé !</p><p>À bientôt !<br/>Larabstrait</p>`
-                },
-                toRecipients: [{ emailAddress: { address: clientEmail.trim() } }]
-              }
-            };
-            await axios.post("https://graph.microsoft.com/v1.0/me/sendMail", emailPayload, { headers: { Authorization: `Bearer ${graphToken}`, "Content-Type": "application/json" } });
-          }
-        } catch (mailError: any) { console.error("[Graph Error - Email automatique]:", mailError.response?.data || mailError.message); }
-      }
-      res.status(201).json(result);
-    } catch (error: any) { res.status(500).json({ error: error.message }); }
+      await pool.query(query, values);
+      res.status(201).json({ id });
+    } catch (error: any) { 
+      console.error("❌ Erreur Create Postgres:", error.message);
+      res.status(500).json({ error: error.message }); 
+    }
   });
 
   app.delete("/api/appointments/:id", async (req, res) => {
     try {
-      const success = await deleteDataverse("cr7e0_gestiontatouages", req.params.id);
-      res.json({ success });
+      await pool.query(`DELETE FROM appointments WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
     } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 
-  app.get("/api/settings/abby", (req: any, res) => {
-    try {
-      const hasEnvKey = !!process.env.ABBY_API_KEY?.trim();
-      res.json({ configured: hasEnvKey, source: hasEnvKey ? "env" : null, abby_api_key: hasEnvKey ? "CONFIGURED" : "" });
-    } catch (error) { res.status(500).json({ error: "Erreur récupération paramètres" }); }
-  });
+  app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
-  app.post("/api/settings/abby", express.json(), (req: any, res) => {
-    const userId = getUserId(req);
-    const { abby_api_key } = req.body;
-    try {
-      const cleanedKey = typeof abby_api_key === "string" ? abby_api_key.trim() : "";
-      db.prepare("INSERT OR REPLACE INTO user_settings (user_id, abby_api_key) VALUES (?, ?)").run(userId, cleanedKey);
-      res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: "Erreur sauvegarde" }); }
-  });
-
-  app.get("/api/abby/debug-auth", (req: any, res) => {
-    const userId = getUserId(req);
-    try {
-      const settings = getStoredAbbySettings(userId);
-      const dbKey = settings?.abby_api_key?.trim() || "";
-      const envKey = process.env.ABBY_API_KEY?.trim() || "";
-      const finalKey = getAbbyApiKey();
-      res.json({ userId, hasDbKey: !!dbKey, hasEnvKey: !!envKey, finalSource: envKey ? "env" : dbKey ? "database" : null, finalPrefix: finalKey ? finalKey.slice(0, 4) : null, finalLength: finalKey ? finalKey.length : 0 });
-    } catch (error) { res.status(500).json({ error: "Erreur debug auth Abby" }); }
-  });
-
-  app.get("/api/abby/test-connection", async (req: any, res) => {
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-      const { data } = await abbyApi.get("/contacts", { params: { limit: 1, page: 1 } });
-      res.json({ success: true, message: "Connexion réussie à l'API Abby", data });
-    } catch (err: any) { handleAbbyError(err, res, "Test Connection"); }
-  });
-
-  app.get("/api/abby/test-debug", async (req: any, res) => {
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-      const { data } = await abbyApi.get("/contacts", { params: { limit: 1, page: 1 } });
-      res.json({ success: true, message: "Connexion Abby OK", data });
-    } catch (err: any) { handleAbbyError(err, res, "Test Debug"); }
-  });
-
- // =================================================================
-  // 1. CRÉATION DE DOCUMENT (FACTURATION DIRECTE ET INDÉPENDANTE - SÉCURISÉE)
-  // =================================================================
-  app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
-    const { appointment, type } = req.body;
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-
-      const emailToUse = (appointment.clientEmail || "").trim().toLowerCase();
-      let customerId = "";
-
-      console.log(`[Abby] Recherche du client : ${emailToUse}`);
-
-      const { data: searchResult } = await abbyApi.get("/contacts", { params: { search: emailToUse, page: 1, limit: 50 } });
-      const contactsList = searchResult?.data || searchResult?.docs || searchResult || [];
-      const found = Array.isArray(contactsList) ? contactsList.find((c: any) => {
-        if (c.emails && Array.isArray(c.emails)) return c.emails.some((e: string) => e.toLowerCase().trim() === emailToUse);
-        return c.email?.toLowerCase().trim() === emailToUse;
-      }) : null;
-
-      if (found) {
-        customerId = found.id;
-      } else {
-        const names = String(appointment.client || "").trim().split(" ");
-        const { data: newContact } = await abbyApi.post("/contact", { firstname: names[0] || "Client", lastname: names.slice(1).join(" ") || "Inconnu", emails: [emailToUse] });
-        customerId = newContact.id;
-      }
-
-      // --- CRÉATION DIRECTE DE LA FACTURE ---
-      if (["Facture", "Facture d'acompte", "Facture finale"].includes(type)) {
-        console.log(`[Abby] Génération du document indépendant : ${type}...`);
-        
-        // 1. Création du brouillon (avec un JSON vide pour éviter les erreurs d'Axios)
-        const { data: document } = await abbyApi.post(`/v2/billing/invoice/${customerId}`, {});
-        const documentId = document.id;
-
-        // 2. Calcul intelligent du montant (gère les clients dispensés d'acompte)
-        const isDispensed = appointment.deposit === 'Dispensé' || appointment.deposit === 'Non' || appointment.cr7e0_acompte === 'Dispensé';
-        const actualDeposit = isDispensed ? 0 : (appointment.depositAmount || 0);
-        
-        let amount = appointment.total || 0;
-        if (type === "Facture d'acompte") amount = actualDeposit;
-        else if (type === "Facture finale" || type === "Facture") amount = (appointment.total || 0) - actualDeposit;
-
-        // 3. Ajout des lignes
-        await abbyApi.patch(`/v2/billing/${documentId}/lines`, {
-          lines: [{ 
-            designation: `${appointment.style || "Prestation de tatouage"} - ${type}`, 
-            quantity: 1, quantityUnit: "unit", 
-            unitPrice: Math.round(amount * 100), 
-            type: "commercial_or_craft_services", vatCode: "FR_00HT" 
-          }]
-        });
-
-        // 4. Finalisation immédiate
-        await abbyApi.patch(`/v2/billing/${documentId}/finalize`, {}).catch((e) => console.log("Erreur finalisation:", e.response?.data || e.message));
-        
-        return res.json({ success: true, data: { id: documentId, message: `${type} générée avec succès !` } });
-      }
-
-      return res.status(400).json({ error: "Type de document non supporté" });
-    } catch (err: any) { 
-      handleAbbyError(err, res, `Create Document (${type})`); 
-    }
-  });
-
-  // =================================================================
-  // 2. ENCAISSEMENT (Déléguée à Make)
-  // =================================================================
-  app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
-    // 👇 On récupère l'objet appointment envoyé par le frontend
-    const { appointmentId, type, abbyDocId, appointment } = req.body;
-    
-    try {
-      if (!abbyDocId) return res.status(400).json({ error: "ID du document manquant" });
-
-      // --- CALCUL DU MONTANT EXACT ---
-        // On vérifie si la personne est dispensée (adapte le mot "Dispensé" selon ce que renvoie ton Dataverse/Frontend)
-        const isDispensed = appointment.deposit === 'Dispensé' || appointment.deposit === 'Non' || appointment.cr7e0_acompte === 'Dispensé';
-        
-        // Si dispensé, l'acompte à déduire est 0€, sinon c'est le montant normal
-        const actualDeposit = isDispensed ? 0 : (appointment.depositAmount || 0);
-
-        let amount = appointment.total || 0;
-        if (type === "Facture d'acompte") {
-           amount = actualDeposit;
-        } else if (type === "Facture finale" || type === "Facture") {
-           amount = (appointment.total || 0) - actualDeposit;
-        }
-      
-      const amountInCents = Math.round(amount * 100); // Abby veut des centimes !
-
-      console.log(`[Make] Ordre d'ENCAISSEMENT pour le doc ${abbyDocId} - Montant : ${amountInCents} cts`);
-
-      const MAKE_PAY_WEBHOOK = "https://hook.eu1.make.com/xyye41lttwbldimzw0zidwxqt6ubn6vs";
-
-      // On envoie tout à Make (y compris le montant !)
-      const response = await axios.post(MAKE_PAY_WEBHOOK, {
-        action: "pay_document",
-        documentType: type,
-        abbyDocumentId: abbyDocId,
-        appointmentId: appointmentId,
-        amount: amountInCents // 👈 LE VOILÀ !
-      });
-
-      if (response.data?.status === "error") {
-         const errorMessage = response.data.message || "Erreur inconnue provenant de Make.";
-         return res.status(400).json({ error: errorMessage });
-      }
-
-      console.log(`[Make] Ordre d'encaissement validé et confirmé par Make !`);
-      return res.json({ success: true, message: "Facture encaissée avec succès !" });
-
-    } catch (err: any) { 
-      console.error("\n=== ERREUR WEBHOOK MAKE (ENCAISSEMENT) ===");
-      console.error(err.response?.data || err.message);
-      return res.status(500).json({ error: "Impossible d'encaisser la facture via Make." });
-    }
-  });
-
-  
-
-  // ==========================================
-  // LISTE DES DOCUMENTS ABBY
-  // ==========================================
   app.get("/api/abby/documents", async (req: any, res) => {
     try {
       const abbyApi = getAbbyAxiosClient();
       if (!abbyApi) return res.json([]);
       
-      const resp = await abbyApi.get("/v2/billings", { 
-        params: { page: 1, limit: 100, test: false } 
-      });
-      
+      const resp = await abbyApi.get("/v2/billings", { params: { page: 1, limit: 100, test: false } });
       const rawDocs = resp.data?.data || resp.data?.docs || resp.data || [];
 
       const formattedDocs = (Array.isArray(rawDocs) ? rawDocs : []).map((doc: any) => {
         const docNumber = (doc.number || doc.id || "").toUpperCase();
-        
         let docType = "Facture";
         if (docNumber.startsWith("BDC")) docType = "Bon de commande";
         else if (docNumber.startsWith("AC")) docType = "Facture d'acompte";
@@ -683,89 +658,136 @@ async function startServer() {
         const rawAmount = doc.totalAmountWithTaxAfterDiscount ?? doc.totalPrice ?? doc.totalAmount ?? 0;
 
         return { 
-          id: doc.number || doc.id || "N/A", 
-          internalId: doc.id, 
+          id: doc.number || doc.id || "N/A", internalId: doc.id, 
           client: doc.customer ? `${doc.customer.firstname || ""} ${doc.customer.lastname || ""}`.trim() : "Client inconnu", 
-          email: doc.customer?.email || "",
-          type: docType, 
-          amount: rawAmount / 100, 
+          email: doc.customer?.email || "", type: docType, amount: rawAmount / 100, 
           date: (doc.emittedAt || doc.createdAt) ? new Date((typeof (doc.emittedAt || doc.createdAt) === "number" && (doc.emittedAt || doc.createdAt).toString().length === 10) ? (doc.emittedAt || doc.createdAt) * 1000 : (doc.emittedAt || doc.createdAt)).toLocaleDateString("fr-FR") : "N/A", 
-          status: statusCode, 
-          statusLabel: statusText 
+          status: statusCode, statusLabel: statusText 
         };
       });
 
-      // Sécurité anti-doublons
-      const uniqueMap = new Map();
-      formattedDocs.forEach(d => { if (d.internalId) uniqueMap.set(d.internalId, d); });
-      const finalDocs = Array.from(uniqueMap.values());
-
-      res.json(finalDocs.sort((a: any, b: any) => (b.date === "N/A" ? "" : b.date.split("/").reverse().join("-")).localeCompare(a.date === "N/A" ? "" : a.date.split("/").reverse().join("-"))));
-    } catch (error: any) { 
-      console.error("[Abby] Erreur fatale docs:", error.response?.data || error.message);
-      res.status(500).json({ error: "Erreur Abby", details: error.message }); 
-    }
+      res.json(formattedDocs);
+    } catch (error: any) { res.status(500).json({ error: "Erreur Abby", details: error.message }); }
   });
-  
+
+  // =========================================================================
+// --- CRÉATEUR DE DOCUMENT (DIRECT ABBY) ---
+// =========================================================================
+app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
+  const { appointment, type } = req.body;
+
+  try {
+    const abbyApi = getAbbyAxiosClient();
+    if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+    // 1. Récupérer ou Créer le client sur Abby
+    const rawName = appointment.client || appointment.client_name || "Client Inconnu";
+    const rawEmail = appointment.clientEmail || appointment.client_email || "";
+    const customerId = await getOrCreateAbbyClient(abbyApi, rawName, rawEmail);
+
+    // 2. Calcul du montant de l'acompte
+    const totalAmount = Number(appointment.total || appointment.total_price) || 0;
+    let calculatedAmount = type === "Facture d'acompte" 
+      ? (totalAmount <= 200 ? 50 : totalAmount * 0.25)
+      : totalAmount;
+
+    // 3. Création du document directement via l'API Abby
+    // On crée un brouillon (draft)
+    const abbyResponse = await abbyApi.post("/v2/billings", {
+      customerId: customerId,
+      type: type === "Facture d'acompte" ? "invoice" : "invoice", // Abby gère les types via le contenu
+      items: [{
+        title: `${type} - Tatouage le ${new Date(appointment.date).toLocaleDateString('fr-FR')}`,
+        price: Math.round(calculatedAmount * 100), // Abby attend des centimes
+        quantity: 1,
+        vatRate: 0 // Auto-entrepreneur généralement à 0%
+      }],
+      comment: `Lien RDV : ${appointment.id}`
+    });
+
+    const newAbbyId = abbyResponse.data?.id || abbyResponse.data?.data?.id;
+
+    if (!newAbbyId) throw new Error("Abby n'a pas renvoyé d'ID.");
+
+    // 4. Enregistrement immédiat dans PostgreSQL (ton NAS)
+    if (type === "Facture d'acompte") {
+      await pool.query(
+        `UPDATE appointments SET abby_deposit_id = $1, deposit_amount = $2 WHERE id = $3`,
+        [newAbbyId, calculatedAmount, appointment.id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE appointments SET abby_final_id = $1 WHERE id = $2`,
+        [newAbbyId, appointment.id]
+      );
+    }
+
+    res.json({ success: true, data: { id: newAbbyId } });
+
+  } catch (error: any) {
+    console.error("❌ Erreur Direct Abby Create:", error.response?.data || error.message);
+    res.status(500).json({ error: "Erreur lors de la création sur Abby" });
+  }
+});
+
+// =========================================================================
+// --- ENCAISSEUR (DIRECT ABBY) ---
+// =========================================================================
+app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
+  const { abbyDocId, type, appointmentId } = req.body;
+
+  try {
+    const abbyApi = getAbbyAxiosClient();
+    if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+    // 1. On valide/paye le document sur Abby
+    // Note : Selon l'API Abby, on peut soit créer un paiement, soit changer le status
+    await abbyApi.post(`/v2/billings/${abbyDocId}/payments`, {
+      amount: 0, // 0 ici signifie "solde total" dans beaucoup d'APIs, ou mettre le vrai montant
+      paymentMethod: "cash", // ou "card"
+      paidAt: new Date().toISOString()
+    });
+
+    // 2. Mise à jour immédiate de ton NAS
+    if (type === "Facture d'acompte") {
+      await pool.query(
+        `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
+        [appointmentId]
+      );
+    }
+
+    res.json({ success: true });
+
+  } catch (error: any) {
+    console.error("❌ Erreur Direct Abby Pay:", error.response?.data || error.message);
+    res.status(500).json({ error: "Erreur lors de l'encaissement sur Abby" });
+  }
+});
 
   app.get("/api/abby/documents/:id/pdf", async (req: any, res) => {
     try {
       const abbyApi = getAbbyAxiosClient();
       if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-      const internalId = req.params.id;
-      let pdfBuffer: any = null;
-      for (const route of [`/v2/billing/${internalId}/download`, `/v2/billings/${internalId}/download`, `/v2/documents/${internalId}/download`]) {
-        try { pdfBuffer = (await abbyApi.get(route, { responseType: "arraybuffer" })).data; break; } catch (e) {}
-      }
-      if (!pdfBuffer) throw new Error("Impossible de trouver le PDF.");
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `${req.query.inline === "true" ? "inline" : "attachment"}; filename="${internalId}.pdf"`);
-      return res.send(pdfBuffer);
-    } catch (error: any) { res.status(500).json({ error: "Impossible de récupérer le PDF." }); }
-  });
 
-  app.post("/api/notifications/subscribe", express.json(), (req: any, res) => {
-    try { db.prepare("INSERT OR REPLACE INTO subscriptions (subscription, user_id) VALUES (?, ?)").run(JSON.stringify(req.body), getUserId(req)); res.status(201).json({}); } 
-    catch (error) { res.status(500).json({ error: "Erreur abonnement" }); }
-  });
+      const { data } = await abbyApi.get(`/v2/billing/${req.params.id}`);
+      const docInfo = data.data || data;
+      const pdfUrl = docInfo.url || docInfo.pdfUrl || docInfo.fileUrl || docInfo.link;
 
-  app.post("/api/notifications/send-test", express.json(), async (req: any, res) => {
-    try {
-      const subscriptions = db.prepare("SELECT subscription FROM subscriptions WHERE user_id = ?").all(getUserId(req));
-      if (subscriptions.length === 0) return res.status(400).json({ error: "Aucun appareil enregistré." });
-      await Promise.all((subscriptions as any[]).map((sub) => webpush.sendNotification(JSON.parse(sub.subscription), JSON.stringify({ title: "Test", body: "Test notification !", url: "/" })).catch((err) => { if (err.statusCode === 410 || err.statusCode === 404) db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription); })));
-      res.json({ success: true });
-    } catch (error: any) { res.status(500).json({ error: error.message }); }
-  });
-  
-  app.get('/api/reports', (req, res) => {
-    try { res.json(db.prepare("SELECT * FROM reports ORDER BY timestamp DESC").all()); } 
-    catch (error: any) { res.status(500).json({ error: "Erreur SQL", details: error.message }); }
-  });
+      if (!pdfUrl) return res.status(404).json({ error: "Le document n'a pas de PDF généré." });
 
-  app.post("/api/reports", express.json(), async (req: any, res) => {
-    const { content } = req.body;
-    if (!content || content.trim().length < 5) return res.status(400).json({ error: "Le message est trop court." });
-    try {
-      db.prepare("INSERT INTO reports (user_id, content) VALUES (?, ?)").run(getUserId(req), content);
-      const subs = db.prepare("SELECT subscription FROM subscriptions").all();
-      await Promise.all(subs.map((sub: any) => webpush.sendNotification(JSON.parse(sub.subscription), JSON.stringify({ title: "Nouveau Ticket 🐞", body: content.substring(0, 50) + "...", url: "/" })).catch((err) => { if (err.statusCode === 410 || err.statusCode === 404) db.prepare("DELETE FROM subscriptions WHERE subscription = ?").run(sub.subscription); })));
-      res.json({ success: true });
-    } catch (error: any) { res.status(500).json({ error: "Erreur écriture" }); }
-  });
+      const pdfResponse = await axios.get(pdfUrl, { responseType: 'stream' });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="document-${req.params.id}.pdf"`);
+      pdfResponse.data.pipe(res);
 
-  app.patch("/api/reports/:id", express.json(), (req: any, res) => {
-    try { db.prepare("UPDATE reports SET completed = ? WHERE id = ?").run(req.body.completed ? 1 : 0, req.params.id); res.json({ success: true }); } 
-    catch (error: any) { res.status(500).json({ error: "Erreur MAJ" }); }
-  });
-
-  app.delete("/api/reports/completed", (req: any, res) => {
-    try { db.prepare("DELETE FROM reports WHERE completed = 1").run(); res.json({ success: true }); } 
-    catch (error: any) { res.status(500).json({ error: "Erreur purge" }); }
+    } catch (error: any) {
+      console.error("[Abby PDF Error]:", error.response?.data || error.message);
+      res.status(500).json({ error: "Erreur lors de la récupération du PDF Abby" });
+    }
   });
 
   app.all("/api/*", (req, res) => {
-    console.error(`[404] Route introuvable : ${req.method} ${req.path}`);
+    console.error(`[404] Route introuvable bloquée : ${req.method} ${req.path}`);
     res.status(404).json({ error: "Route API introuvable", path: req.path });
   });
 
@@ -779,14 +801,6 @@ async function startServer() {
       if (!fs.existsSync(indexPath)) return res.status(404).send("index.html introuvable.");
       res.status(200).set({ "Content-Type": "text/html" }).send(await vite.transformIndexHtml(req.url, fs.readFileSync(indexPath, "utf-8")));
     } catch (e) { res.status(500).send("Erreur interne."); }
-  });
-
-  cron.schedule('* * * * *', async () => {
-    try {
-      const now = new Date();
-      const futureLimit = new Date(now.getTime() + 20 * 60000).toISOString();
-      const appointments = await fetchDataverse("cr7e0_gestiontatouages", "cr7e0_nomclient,cr7e0_daterdv", `cr7e0_daterdv ge ${now.toISOString()} and cr7e0_daterdv le ${futureLimit}`);
-    } catch (error: any) { console.error("Erreur Cron:", error.message); }
   });
 
   app.listen(PORT, "0.0.0.0", () => {

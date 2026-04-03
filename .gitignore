@@ -8,3 +8,4 @@ coverage/
 !.env.example
 notifications.db
 decharges/
+sync-db.js

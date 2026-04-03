@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Receipt, FileText, CheckCircle2, Clock, Copy, Check, RefreshCw } from 'lucide-react';
+import { Search, Receipt, FileText, CheckCircle2, Clock, Copy, Check, RefreshCw, Download } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export const BillingView = ({ appointments, clients, apiFetch }: any) => {
@@ -9,6 +9,7 @@ export const BillingView = ({ appointments, clients, apiFetch }: any) => {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDocs = async () => {
@@ -30,7 +31,6 @@ export const BillingView = ({ appointments, clients, apiFetch }: any) => {
 
   const filteredInvoices = invoices.filter(inv => {
     const query = searchQuery.toLowerCase();
-    // Sécurité : on vérifie que le client et l'id existent avant de faire toLowerCase()
     const clientName = inv.client || "";
     const invId = inv.id || "";
     const matchesSearch = clientName.toLowerCase().includes(query) || invId.toLowerCase().includes(query);
@@ -52,6 +52,29 @@ export const BillingView = ({ appointments, clients, apiFetch }: any) => {
     navigator.clipboard.writeText(internalId);
     setCopiedId(internalId);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleDownload = async (internalId: string, docNumber: string) => {
+    setIsDownloading(internalId);
+    try {
+      const res = await apiFetch(`/api/abby/documents/${internalId}/pdf`);
+      if (!res.ok) throw new Error("Erreur réseau ou document introuvable");
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${docNumber}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error("Erreur téléchargement:", e);
+      alert("Impossible de télécharger le document. Il n'est peut-être pas encore généré au format PDF côté Abby.");
+    } finally {
+      setIsDownloading(null);
+    }
   };
 
   return (
@@ -121,6 +144,7 @@ export const BillingView = ({ appointments, clients, apiFetch }: any) => {
                   <th className="px-6 py-4 font-medium">Date</th>
                   <th className="px-6 py-4 font-medium text-right">Montant</th>
                   <th className="px-6 py-4 font-medium text-center">Statut</th>
+                  <th className="px-6 py-4 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -159,6 +183,20 @@ export const BillingView = ({ appointments, clients, apiFetch }: any) => {
                         {inv.status === 'paid' ? <CheckCircle2 size={12} /> : <Clock size={12} />}
                         <span>{inv.statusLabel}</span>
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        onClick={() => handleDownload(inv.internalId, inv.id)}
+                        disabled={isDownloading === inv.internalId}
+                        className={`p-2 rounded-lg border transition-colors flex items-center justify-center ml-auto ${
+                          isDownloading === inv.internalId 
+                            ? 'bg-lilas/20 border-lilas/30 text-lilas cursor-wait' 
+                            : 'bg-white/5 border-white/10 text-gray-400 hover:bg-lilas hover:text-black hover:border-lilas'
+                        }`}
+                        title="Télécharger le PDF"
+                      >
+                        {isDownloading === inv.internalId ? <RefreshCw size={18} className="animate-spin" /> : <Download size={18} />}
+                      </button>
                     </td>
                   </tr>
                 ))}

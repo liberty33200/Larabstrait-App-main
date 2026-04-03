@@ -65,43 +65,22 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
       }
 
       const dateTime = new Date(`${formData.date}T${formData.time}`);
-      
-      const orderFormIds: Record<string, number> = {
-        "Édité": 129690000,
-        "Non édité": 129690001,
-        "Dispensé": 129690002
-      };
-
-      const depositIds: Record<string, number> = {
-        "Oui": 129690000,
-        "Non": 129690001,
-        "Dispensé": 129690002
-      };
-
-      const styleIds: Record<string, number> = {
-        "Flash": 129690000,
-        "Projet perso": 129690001,
-        "Retouches": 129690002,
-        "RDV Préparatoire": 129690003,
-        "Event": 129690004,
-        "Cadeau": 129690005
-      };
-
       const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
 
+      // PAYLOAD PROPRE POUR POSTGRESQL (Plus de cr7e0 ni de codes chiffres)
       const createPayload: any = {
-        cr7e0_nomclient: clientName,
-        cr7e0_email: clientEmail,
-        cr7e0_daterdv: dateTime.toISOString(),
-        cr7e0_tariftattoo: parseFloat(formData.total.toString()),
-        cr7e0_acompte: (depositIds[formData.deposit] || 129690001).toString(),
-        cr7e0_montantacompte: parseFloat(formData.depositAmount.toString()),
-        cr7e0_typederdv: (styleIds[formData.style] || 129690000).toString(),
-        cr7e0_boncommande: (orderFormIds[formData.orderForm] || 129690001).toString(),
-        cr7e0_emplacement: formData.location,
-        cr7e0_recapitulatifprojet: formData.projectRecap,
-        cr7e0_taille: formData.size,
-        cr7e0_etatdessin: needsDrawing ? 'À dessiner' : 'Non nécessaire'
+        client_name: clientName,
+        client_email: clientEmail,
+        date: dateTime.toISOString(),
+        total: parseFloat(formData.total.toString()),
+        deposit_status: formData.deposit,
+        deposit_amount: parseFloat(formData.depositAmount.toString()),
+        style: formData.style,
+        order_form: formData.orderForm,
+        location: formData.location,
+        project_recap: formData.projectRecap,
+        size: formData.size,
+        project_status: needsDrawing ? 'À dessiner' : 'Non nécessaire'
       };
 
       const response = await apiFetch('/api/appointments', {
@@ -181,7 +160,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                       placeholder="Nom complet du client"
                       value={formData.newClientName}
                       onChange={(e) => setFormData({...formData, newClientName: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                     />
                   </div>
                   <div className="space-y-1">
@@ -190,7 +169,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                       placeholder="Email (optionnel)"
                       value={formData.newClientEmail}
                       onChange={(e) => setFormData({...formData, newClientEmail: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                     />
                   </div>
                 </div>
@@ -198,7 +177,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                 <select 
                   value={formData.clientId}
                   onChange={(e) => setFormData({...formData, clientId: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all appearance-none"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all appearance-none"
                 >
                   <option value="">Sélectionner un client</option>
                   {clients.map((client: any) => (
@@ -215,7 +194,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                   type="date" 
                   value={formData.date}
                   onChange={(e) => setFormData({...formData, date: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                 />
               </div>
               <div className="space-y-1">
@@ -224,7 +203,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                   type="time" 
                   value={formData.time}
                   onChange={(e) => setFormData({...formData, time: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                 />
               </div>
             </div>
@@ -234,7 +213,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
               <select 
                 value={formData.style}
                 onChange={(e) => setFormData({...formData, style: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all appearance-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all appearance-none"
               >
                 <option value="Flash">Flash</option>
                 <option value="Projet perso">Projet perso</option>
@@ -252,7 +231,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                   type="text" 
                   value={formData.location}
                   onChange={(e) => setFormData({...formData, location: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                   placeholder="Ex: Bras"
                 />
               </div>
@@ -262,7 +241,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                   type="text" 
                   value={formData.size}
                   onChange={(e) => setFormData({...formData, size: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                   placeholder="Ex: 10cm"
                 />
               </div>
@@ -273,7 +252,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
               <textarea 
                 value={formData.projectRecap}
                 onChange={(e) => setFormData({...formData, projectRecap: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all min-h-[80px]"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all min-h-[80px]"
                 placeholder="Détails du projet..."
               />
             </div>
@@ -286,7 +265,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                 type="number" 
                 value={formData.total || ''}
                 onChange={(e) => handleTotalChange(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
               />
             </div>
 
@@ -296,7 +275,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                 <select 
                   value={formData.deposit}
                   onChange={(e) => setFormData({...formData, deposit: e.target.value})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all appearance-none"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all appearance-none"
                 >
                   <option value="Oui">Oui</option>
                   <option value="Non">Non</option>
@@ -309,7 +288,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
                   type="number" 
                   value={formData.depositAmount}
                   onChange={(e) => setFormData({...formData, depositAmount: parseFloat(e.target.value) || 0})}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all"
                 />
               </div>
             </div>
@@ -319,7 +298,7 @@ export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: 
               <select 
                 value={formData.orderForm}
                 onChange={(e) => setFormData({...formData, orderForm: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all appearance-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all appearance-none"
               >
                 <option value="Non édité">Non édité</option>
                 <option value="Édité">Édité</option>

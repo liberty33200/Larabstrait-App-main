@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Edit2, Save, RefreshCw, AlertCircle, 
   Calendar, Clock, Wallet, CheckCircle2, Mail, Check, Trash2,
-  FileText, Receipt, Plus, CreditCard, FileSignature, Download, PenTool, X, Eraser
+  FileText, Receipt, Plus, CreditCard, FileSignature, Download, PenTool, X, Eraser, Link
 } from 'lucide-react';
 
 // ==========================================
@@ -15,7 +15,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Pré-remplissage avec les infos de la fiche RDV si elles existent
   const [form, setForm] = useState({
     phone: appointment.phone || '',
     instagram: appointment.instagram || '',
@@ -198,7 +197,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
 
       const pdfBase64 = doc.output('datauristring');
 
-      // Mise à jour silencieuse des nouvelles infos contact dans Dataverse
       if (form.phone !== appointment.phone || form.instagram !== appointment.instagram) {
          try {
            await apiFetch(`/api/appointments/${appointment.id}`, {
@@ -238,7 +236,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
   return (
     <div className="fixed inset-0 z-[200] bg-dark-bg/95 backdrop-blur-md overflow-y-auto custom-scrollbar">
       <div className="w-full max-w-3xl mx-auto my-0 md:my-8 bg-[#0A0A0B] border border-white/10 md:rounded-3xl shadow-2xl min-h-screen md:min-h-0 flex flex-col text-gray-300">
-        
         <div className="flex justify-between items-center p-6 border-b border-white/5 sticky top-0 z-50 bg-[#0A0A0B]/90 backdrop-blur-sm md:rounded-t-3xl">
           <h2 className="text-xl font-bold text-white flex items-center space-x-2">
             <FileSignature className="text-lilas" />
@@ -250,8 +247,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
         </div>
 
         <div className="p-6 md:p-8 flex-1 space-y-8">
-          
-          {/* SECTION 1 : Infos Client */}
           <div className="space-y-4">
             <h3 className="text-sm font-bold uppercase tracking-widest text-lilas">Informations</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -274,7 +269,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
             </div>
           </div>
 
-          {/* SECTION 2 : Projet */}
           <div className="space-y-4">
             <h3 className="text-sm font-bold uppercase tracking-widest text-lilas">Projet convenu</h3>
             <div className="p-5 bg-white/5 border border-white/5 rounded-xl text-sm leading-relaxed">
@@ -285,7 +279,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
             </p>
           </div>
 
-          {/* SECTION 3 : Questionnaire de santé */}
           <div className="space-y-4">
             <h3 className="text-sm font-bold uppercase tracking-widest text-amber-400">Questionnaire de santé</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -320,11 +313,10 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
             </div>
           </div>
 
-          {/* SECTION 5 : Signature */}
           <div className="space-y-4 pt-4 border-t border-white/5">
             <h3 className="text-sm font-bold uppercase tracking-widest text-lilas">Validation & Signature</h3>
             <p className="text-sm text-gray-400 leading-relaxed">
-              Je m'engage à respecter scrupuleusement les consignes de soins post-tatouage (pas de bain, piscine, sauna, sport, avion ou contact avec des animaux pendant 1 mois). Je décharge <strong>Larabstrait</strong> de toute responsabilité en cas de complications liées à un mauvais entretien de ma part.
+              Je m'engage à respecter scrupuleusement les consignes de soins post-tatouage. Je décharge <strong>Larabstrait</strong> de toute responsabilité en cas de complications liées à un mauvais entretien de ma part.
             </p>
             
             <div className="border border-white/20 rounded-2xl bg-white/5 relative overflow-hidden" style={{ touchAction: 'none' }}>
@@ -366,7 +358,6 @@ const ConsentModal = ({ appointment, onClose, onSaved, apiFetch }: any) => {
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );
@@ -385,13 +376,13 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     return t * 0.25;
   };
   
+  // ICI : On garde strictement ton format de date de test pour éviter le crash !
   const [formData, setFormData] = useState({
     date: appointment.rawDate ? new Date(appointment.rawDate).toISOString().split('T')[0] : '',
     time: appointment.time || '14:00',
     style: appointment.style || '',
     total: appointment.total || 0,
     deposit: appointment.deposit || 'Non',
-    // On force l'acompte à 0 si dispensé dès l'initialisation
     depositAmount: appointment.deposit === 'Dispensé' ? 0 : (appointment.depositAmount || calculateDefaultDeposit(appointment.total || 0)),
     status: appointment.status || 'Confirmé',
     location: appointment.location || '',
@@ -401,20 +392,23 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     phone: appointment.phone || '',
     instagram: appointment.instagram || ''
   });
-  
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isCreating, setIsCreating] = useState<string | null>(null);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
-  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
   const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
 
   const [hasConsent, setHasConsent] = useState(false);
   const [showConsentModal, setShowConsentModal] = useState(false);
 
-  const abbyAc = appointment.abbyAcompteId;
-  const abbyFact = appointment.abbyFactureId;
+  // --- NOUVEAUX ETATS POUR L'AUTOMATISATION ABBY ---
+  const [isCreating, setIsCreating] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+
+  // Récupération des IDs Abby (Compatible Dataverse et Postgres)
+  const abbyAc = appointment.cr7e0_abby_acompte_id || appointment.abbyAcompteId || appointment.abby_deposit_id;
+  const abbyFact = appointment.cr7e0_abby_facture_id || appointment.abbyFactureId || appointment.abby_final_id;
 
   const [docState, setDocState] = useState({
     depositInvoice: 'none',
@@ -450,6 +444,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
   useEffect(() => {
     let isMounted = true;
 
+    // --- INITIALISATION AUTOMATIQUE ABBY ---
     const initAbbyAndDocs = async () => {
       if (!isMounted) return;
       setIsLoadingDocs(true);
@@ -484,122 +479,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     checkConsent();
 
     return () => { isMounted = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appointment.id, abbyAc, abbyFact]);
-
-  const silentUpdateDataverse = async (payload: any) => {
-    try {
-      await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      onUpdate(); 
-    } catch (e) {}
-  };
-
-  
-  // --- FONCTION DE CRÉATION DE DOCUMENT ABBY ---
-  const handleCreateAbbyDocument = async (type: string) => {
-  if (!hasApiKey) {
-    alert("Configurez votre clé API Abby.");
-    return;
-  }
-
-  setIsCreating(type);
-  setError(null);
-
-  try {
-    const appointmentToSend = {
-      ...appointment,
-      depositAmount: appointment.deposit === 'Dispensé' ? 0 : appointment.depositAmount
-    };
-
-    const res = await apiFetch('/api/abby/create-document', {
-      method: 'POST',
-      body: JSON.stringify({ appointment: appointmentToSend, type }),
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const data = await parseApiResponse(res);
-
-    if (!res.ok) {
-      throw new Error(
-        data?.error ||
-        data?.message ||
-        data?.details?.message ||
-        `Erreur création ${type}.`
-      );
-    }
-
-    const newAbbyId = data?.data?.id;
-
-    if (!newAbbyId) {
-      throw new Error("Réponse Abby invalide : identifiant du document manquant.");
-    }
-
-    if (type === "Facture d'acompte") {
-      setDocState((prev) => ({ ...prev, depositInvoice: 'created' }));
-      await silentUpdateDataverse({ cr7e0_abby_acompte_id: newAbbyId });
-    } else if (type === 'Facture finale') {
-      setDocState((prev) => ({ ...prev, finalInvoice: 'created' }));
-      await silentUpdateDataverse({ cr7e0_abby_facture_id: newAbbyId });
-    }
-  } catch (err: any) {
-    const message = err?.message || `Erreur création ${type}.`;
-    setError(message);
-    alert(message);
-  } finally {
-    setIsCreating(null);
-  }
-};
-
-  // --- FONCTION D'ENCAISSEMENT ---
-  const parseApiResponse = async (res: Response) => {
-  const contentType = res.headers.get('content-type') || '';
-
-  if (contentType.includes('application/json')) {
-    return await res.json();
-  }
-
-  const text = await res.text();
-  return text ? { message: text } : null;
-};
-
-// --- FONCTION D'ENCAISSEMENT ---
-  const handlePayDocument = async (type: string) => {
-    setIsCreating(`pay_${type}`);
-    try {
-      const docIdToPay = type === "Facture d'acompte" ? abbyAc : abbyFact;
-      const res = await apiFetch('/api/abby/pay-document', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        // 👇 C'est ici que la magie opère : on envoie tout l'objet appointment au serveur
-        body: JSON.stringify({ appointmentId: appointment.id, type, abbyDocId: docIdToPay, appointment: appointment }) 
-      });
-      
-      const data = await res.json();
-
-      // On vérifie si le serveur a renvoyé une erreur (ex: Make a planté)
-      if (!res.ok) {
-        throw new Error(data.error || "Erreur lors de l'encaissement.");
-      }
-      
-      // SI TOUT EST OK, on met l'interface au vert !
-      if (type === "Facture d'acompte") {
-        setDocState(prev => ({ ...prev, depositInvoice: 'paid' }));
-        setFormData(prev => ({ ...prev, deposit: 'Oui' }));
-        await silentUpdateDataverse({ cr7e0_acompte: "129690000" }); 
-      } else if (type === 'Facture finale') {
-        setDocState(prev => ({ ...prev, finalInvoice: 'paid' }));
-      }
-      
-      // Petit message de confirmation
-      alert("Encaissé avec succès !");
-
-    } catch (err: any) { 
-      // Si ça plante, on affiche le message d'erreur et on ne met PAS au vert
-      alert(err.message || "Erreur lors de l'encaissement."); 
-    } finally { 
-      setIsCreating(null); 
-    }
-  };
+  }, [appointment.id, abbyAc, abbyFact]); // Dépendances mises à jour
 
   const handleSendPdf = async () => {
     if (!appointment.clientEmail) { alert("Ce client n'a pas d'adresse email renseignée."); return; }
@@ -627,20 +507,119 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
 
   const currentControlStatus = isEditing ? getControlStatus({ style: formData.style, deposit: formData.deposit, total: formData.total }) : getControlStatus(appointment);
 
+  // --- NOUVELLE FONCTION DE MISE A JOUR SILENCIEUSE ---
+  const silentUpdateDataverse = async (payload: any) => {
+    try {
+      await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      onUpdate(); 
+    } catch (e) {}
+  };
+
+  // --- NOUVELLES FONCTIONS ABBY AUTO ---
+  const handleCreateAbbyDocument = async (type: string) => {
+    if (!hasApiKey) {
+      alert("Configurez votre clé API Abby.");
+      return;
+    }
+
+    setIsCreating(type);
+    setError(null);
+
+    try {
+      const appointmentToSend = {
+        ...appointment,
+        depositAmount: appointment.deposit === 'Dispensé' ? 0 : formData.depositAmount
+      };
+
+      const res = await apiFetch('/api/abby/create-document', {
+        method: 'POST',
+        body: JSON.stringify({ appointment: appointmentToSend, type }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        data = { message: await res.text() };
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || `Erreur création ${type}.`);
+      }
+
+      const newAbbyId = data?.data?.id || data?.id;
+
+      if (!newAbbyId) {
+        throw new Error("Réponse Abby invalide : identifiant manquant.");
+      }
+
+      if (type === "Facture d'acompte") {
+        setDocState((prev) => ({ ...prev, depositInvoice: 'created' }));
+        await silentUpdateDataverse({ cr7e0_abby_acompte_id: newAbbyId, deposit_amount: formData.depositAmount });
+      } else if (type === 'Facture finale') {
+        setDocState((prev) => ({ ...prev, finalInvoice: 'created' }));
+        await silentUpdateDataverse({ cr7e0_abby_facture_id: newAbbyId });
+      }
+    } catch (err: any) {
+      const message = err?.message || `Erreur création ${type}.`;
+      setError(message);
+      alert(message);
+    } finally {
+      setIsCreating(null);
+    }
+  };
+
+  const handlePayDocument = async (type: string) => {
+    setIsCreating(`pay_${type}`);
+    try {
+      const docIdToPay = type === "Facture d'acompte" ? abbyAc : abbyFact;
+      const res = await apiFetch('/api/abby/pay-document', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ appointmentId: appointment.id, type, abbyDocId: docIdToPay, appointment: appointment }) 
+      });
+      
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Erreur lors de l'encaissement.");
+      }
+      
+      if (type === "Facture d'acompte") {
+        setDocState(prev => ({ ...prev, depositInvoice: 'paid' }));
+        setFormData(prev => ({ ...prev, deposit: 'Oui' }));
+        await silentUpdateDataverse({ cr7e0_acompte: 'Oui', deposit_status: 'Oui' }); 
+      } else if (type === 'Facture finale') {
+        setDocState(prev => ({ ...prev, finalInvoice: 'paid' }));
+      }
+      
+      alert("Encaissé avec succès !");
+
+    } catch (err: any) { 
+      alert(err.message || "Erreur lors de l'encaissement."); 
+    } finally { 
+      setIsCreating(null); 
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true); setError(null);
     try {
       const dateTime = new Date(`${formData.date}T${formData.time}`);
-      const depositIds: Record<string, number> = { "Oui": 129690000, "Non": 129690001, "Dispensé": 129690002 };
-      const styleIds: Record<string, number> = { "Flash": 129690000, "Projet perso": 129690001, "Retouches": 129690002, "RDV Préparatoire": 129690003, "Event": 129690004, "Cadeau": 129690005 };
 
+      // Envoi du payload compatible PostgreSQL
       const updatePayload: any = {
-        cr7e0_daterdv: dateTime.toISOString(), cr7e0_tariftattoo: parseFloat(formData.total.toString()),
-        cr7e0_acompte: (depositIds[formData.deposit] || 129690001).toString(), 
+        cr7e0_daterdv: dateTime.toISOString(), 
+        cr7e0_tariftattoo: parseFloat(formData.total.toString()),
+        cr7e0_acompte: formData.deposit, // Le backend lira "Oui", "Non", "Dispensé"
         cr7e0_montantacompte: parseFloat(formData.depositAmount.toString()),
-        cr7e0_typederdv: (styleIds[formData.style] || 129690000).toString(),
-        cr7e0_emplacement: formData.location, cr7e0_recapitulatifprojet: formData.projectRecap,
-        cr7e0_taille: formData.size, cr7e0_etatdessin: formData.projectStatus,
+        cr7e0_typederdv: formData.style,
+        location: formData.location, 
+        cr7e0_recapitulatifprojet: formData.projectRecap,
+        size: formData.size, 
+        cr7e0_etatdessin: formData.projectStatus,
         cr7e0_telephone: formData.phone,
         cr7e0_instagram: formData.instagram
       };
@@ -659,6 +638,8 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
       onUpdate();
     } catch (err: any) { setError(err.message); setSaving(false); }
   };
+
+  const isBillableStyle = formData.style.toLowerCase() === 'flash' || formData.style.toLowerCase() === 'projet perso';
 
   return (
     <>
@@ -728,7 +709,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Date</label>
-                  {isEditing ? <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{appointment.date}</p>}
+                  {isEditing ? <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all" /> : <p className="text-lg font-medium">{appointment.date || new Date(appointment.rawDate).toLocaleDateString('fr-FR')}</p>}
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Heure</label>
@@ -772,8 +753,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
             <div className="glass-card p-8 border-t-4 border-lilas">
               <h3 className="text-xl font-bold mb-6 flex items-center space-x-2"><Wallet size={20} className="text-lilas" /><span>Paiement</span></h3>
               <div className="space-y-6">
-                
-                {/* LIGNE TARIF TOTAL */}
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Tarif Total</span>
                   {isEditing ? (
@@ -797,7 +776,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   ) : <span className="text-2xl font-bold text-lilas">{appointment.total}€</span>}
                 </div>
 
-                {/* LIGNE ACOMPTE VERSÉ */}
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Acompte versé</span>
                   {isEditing ? (
@@ -818,7 +796,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   ) : <span className={`font-bold ${formData.deposit === 'Oui' ? 'text-emerald-400' : formData.deposit === 'Dispensé' ? 'text-purple-400' : 'text-rose-400'}`}>{formData.deposit}</span>}
                 </div>
 
-                {/* LIGNE MONTANT ACOMPTE */}
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Montant Acompte</span>
                   {isEditing ? (
@@ -835,7 +812,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   ) : <span className="font-medium">{appointment.deposit === 'Dispensé' ? 0 : (appointment.depositAmount || calculateDefaultDeposit(appointment.total))}€</span>}
                 </div>
 
-                {/* RÉSUMÉ TOTAL À PERCEVOIR */}
                 <div className="pt-6 border-t border-white/5 space-y-3">
                   <div className="flex justify-between items-center text-sm"><span className="text-gray-400">Total</span><span>{formData.total}€</span></div>
                   {formData.deposit !== 'Dispensé' ? (
@@ -850,7 +826,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
               </div>
             </div>
 
-            {/* --- SECTION DÉCHARGE & CONSENTEMENT --- */}
             <div className="glass-card p-6 border-t-4 border-purple-500/50">
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4">
                 <FileSignature size={12} /><span>Décharge & Consentement</span>
@@ -880,7 +855,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
               )}
             </div>
 
-            {/* --- COMMUNICATION CLIENT --- */}
             <div className="glass-card p-6 border-t-4 border-blue-500/50">
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4"><Mail size={12} /><span>Communication Client</span></label>
               <button onClick={handleSendPdf} disabled={emailStatus !== 'idle' || !appointment.clientEmail} className={`w-full py-3 border rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2 disabled:opacity-80 ${emailStatus === 'idle' ? 'bg-blue-500/10 hover:bg-blue-500 hover:text-white border-blue-500/20 text-blue-400' : ''} ${emailStatus === 'sending' ? 'bg-blue-500/20 border-blue-500/30 text-blue-300 cursor-wait' : ''} ${emailStatus === 'success' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : ''} ${emailStatus === 'error' ? 'bg-rose-500/20 border-rose-500/50 text-rose-400' : ''}`}>
@@ -889,8 +863,8 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
               </button>
             </div>
 
-            {/* --- FACTURATION ABBY --- */}
-            {parseFloat(formData.total.toString()) > 0 && (
+            {/* --- 🎯 ZONE FACTURATION AUTOMATIQUE ABBY --- */}
+            {isBillableStyle && parseFloat(formData.total.toString()) > 0 && (
               <div className="glass-card p-6 border-t-4 border-emerald-500/50 relative">
                 {isLoadingDocs && <div className="absolute inset-0 bg-dark-bg/80 backdrop-blur-sm z-10 flex items-center justify-center rounded-xl"><RefreshCw className="animate-spin text-emerald-500" size={24} /></div>}
                 <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4"><FileText size={12} /><span>Facturation (Abby)</span></label>
@@ -900,7 +874,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                 ) : (
                   <div className="space-y-3">
                     
-                    {/* 1. BOUTON ACOMPTE (Masqué si "Dispensé" ou Montant = 0) */}
                     {formData.deposit !== 'Dispensé' && parseFloat(formData.depositAmount.toString()) > 0 && (
                       docState.depositInvoice === 'none' ? (
                         <button onClick={() => handleCreateAbbyDocument("Facture d'acompte")} disabled={isCreating === "Facture d'acompte"} className="w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-between px-4 disabled:opacity-50">
@@ -915,7 +888,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                       )
                     )}
 
-                    {/* 2. BOUTON FACTURE FINALE (Toujours affiché si Total > 0) */}
                     {docState.finalInvoice === 'none' ? (
                       <button onClick={() => handleCreateAbbyDocument('Facture finale')} disabled={isCreating === 'Facture finale'} className="w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-between px-4 disabled:opacity-50">
                         <div className="flex items-center space-x-3"><Receipt size={16} className="text-lilas" /><span>Créer Facture finale</span></div>{isCreating === 'Facture finale' ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} className="text-gray-400" />}

@@ -3,11 +3,22 @@
         {
             "ssh": "Disabled",
             "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "larabstrait_dev",
+            "database": "larabstrait_dev",
+            "username": "postgres",
+            "password": "admin"
+        },
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
             "server": "192.168.1.152",
             "port": 5433,
             "driver": "PostgreSQL",
-            "name": "larabstrait-db",
-            "database": "larabstrait-db",
+            "name": "larabstrait-prod",
+            "database": "larabstrait-prod",
             "username": "admin-florent",
             "password": "vfr'\"edcVFR43EDC"
         }
