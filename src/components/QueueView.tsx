@@ -53,8 +53,7 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
     
     try {
       // 1. SUPPRESSION DANS LA BASE POSTGRESQL
-      // (Rétro-compatibilité si c'est un vieux flash qui traîne avec "dataverseId")
-      const apptId = selectedItem.client.appointmentId || selectedItem.client.dataverseId;
+      const apptId = selectedItem.client.appointmentId;
       if (apptId) {
         await apiFetch(`/api/appointments/${apptId}`, { method: 'DELETE' });
         console.log("🗑️ RDV supprimé de la base de données !");

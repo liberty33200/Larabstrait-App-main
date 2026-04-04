@@ -18,6 +18,10 @@ import axios, { AxiosInstance } from "axios";
 dotenv.config();
 const { Pool } = pkg;
 
+// --- CACHE POUR L'API ABBY ---
+let abbyCache: { data: any[] | null, lastFetch: number } = { data: null, lastFetch: 0 };
+const ABBY_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes de mémoire
+
 // 1. On s'assure que le dossier "data" existe
 const dataDir = path.join(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
@@ -512,7 +516,97 @@ async function startServer() {
   });
 
   app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
-  app.get('/api/appointments/:id/check-consent', (req, res) => { res.json({ exists: false }); });
+  // =========================================================================
+  // --- GESTION DES PDF DE DÉCHARGE ET FICHES DE SOINS ---
+  // =========================================================================
+  const consentsDir = path.join(process.cwd(), 'data', 'consents');
+  if (!fs.existsSync(consentsDir)) fs.mkdirSync(consentsDir, { recursive: true });
+
+  // 1. Sauvegarder la décharge signée
+  app.post('/api/appointments/:id/consent', express.json({limit: '50mb'}), async (req, res) => {
+    try {
+      const { pdfData } = req.body;
+      if (!pdfData) return res.status(400).json({ error: "Données PDF manquantes" });
+      
+      // On nettoie l'en-tête base64 pour obtenir le fichier pur
+      const base64Data = pdfData.replace(/^data:application\/pdf;filename=generated\.pdf;base64,/, "").replace(/^data:application\/pdf;base64,/, "");
+      
+      const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
+      fs.writeFileSync(filePath, base64Data, 'base64');
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("❌ Erreur sauvegarde PDF:", error.message);
+      res.status(500).json({ error: "Erreur lors de la sauvegarde du PDF" });
+    }
+  });
+
+  // 2. Vérifier si une décharge existe pour ce RDV
+  app.get('/api/appointments/:id/check-consent', (req, res) => {
+    const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
+    res.json({ exists: fs.existsSync(filePath) });
+  });
+
+  // 3. Télécharger la décharge
+  app.get('/api/appointments/:id/download-consent', (req, res) => {
+    const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="decharge-${req.params.id}.pdf"`);
+      const stream = fs.createReadStream(filePath);
+      stream.pipe(res);
+    } else {
+      res.status(404).send("Document introuvable");
+    }
+  });
+
+  // 4. Envoi de la fiche de soins par email (Ancien système avec pièce jointe)
+  app.post('/api/appointments/:id/send-pdf', express.json(), async (req: any, res) => {
+    try {
+      const { clientEmail, clientName } = req.body;
+      
+      if (!clientEmail) {
+        return res.status(400).json({ error: "Email manquant" });
+      }
+
+      const smtpPort = parseInt(process.env.SMTP_PORT || "465");
+
+      // On utilise nodemailer avec les variables d'environnement
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || "smtp.hostinger.com",
+        port: smtpPort,
+        secure: smtpPort === 465, // 👈 LA CORRECTION EST ICI : true pour 465, false pour 587
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      // Le chemin absolu vers ton fichier PDF de soins
+      const pdfPath = path.join(process.cwd(), 'public', 'Feuille_de_soins.pdf');
+
+      const mailOptions = {
+        from: `"Larabstrait" <${process.env.SMTP_USER}>`,
+        to: clientEmail,
+        subject: "Ta fiche de soins Larabstrait ✨",
+        text: `Hello !\n\nSuite à notre séance voici, ci-joint, la feuille de soin comme convenu avec toutes les consignes à respecter durant la période de cicatrisation.\n\nJe reste disponible si besoin.\n\nÀ bientôt et bonne cicatrisation💫\n\nLara - Larabstrait`,
+        attachments: [
+          {
+            filename: 'Fiche_de_soins_Larabstrait.pdf',
+            path: pdfPath,
+            contentType: 'application/pdf'
+          }
+        ]
+      };
+
+      await transporter.sendMail(mailOptions);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("❌ Erreur d'envoi d'email:", error.message);
+      res.status(500).json({ error: "Erreur lors de l'envoi de l'email" });
+    }
+  });
+
   app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
   app.get("/api/abby/documents", async (req: any, res) => {
@@ -520,6 +614,13 @@ async function startServer() {
       const abbyApi = getAbbyAxiosClient();
       if (!abbyApi) return res.json([]);
       
+      // 🚀 SYSTEME DE CACHE : On regarde si on a déjà l'info en mémoire (moins de 2 minutes)
+      const now = Date.now();
+      if (abbyCache.data && (now - abbyCache.lastFetch < ABBY_CACHE_DURATION)) {
+        return res.json(abbyCache.data); // Réponse instantanée !
+      }
+      
+      // Sinon, on va chercher chez Abby
       const resp = await abbyApi.get("/v2/billings", { params: { page: 1, limit: 100, test: false } });
       const rawDocs = resp.data?.data || resp.data?.docs || resp.data || [];
 
@@ -548,6 +649,10 @@ async function startServer() {
           status: statusCode, statusLabel: statusText 
         };
       });
+
+      // 🚀 On sauvegarde dans le cache pour les prochains appels !
+      abbyCache.data = formattedDocs;
+      abbyCache.lastFetch = now;
 
       res.json(formattedDocs);
     } catch (error: any) { res.status(500).json({ error: "Erreur Abby", details: error.message }); }
@@ -661,40 +766,49 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
   });
 
   app.post("/api/abby/sync", async (req, res) => {
-  try {
-    const abbyApi = getAbbyAxiosClient();
-    if (!abbyApi) {
-      return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
-    }
-
-    const response = await abbyApi.get('/v2/billings');
-    const documents = response.data?.data || response.data || [];
-
-    const paidStatuses = ['paid', 'signed', 'accepted', 'encaissé'];
-    let updateCount = 0;
-
-    for (const doc of documents) {
-      if (paidStatuses.includes(doc.status)) {
-        const updateAcompte = await pool.query(
-          `UPDATE appointments SET deposit_status = 'Oui' WHERE abby_deposit_id = $1 AND deposit_status != 'Oui'`,
-          [doc.id]
-        );
-        updateCount += updateAcompte.rowCount || 0;
-
-        const updateFacture = await pool.query(
-          `UPDATE appointments SET project_status = 'Payé' WHERE abby_final_id = $1 AND project_status != 'Payé'`,
-          [doc.id]
-        );
-        updateCount += updateFacture.rowCount || 0;
+    try {
+      // 🧹 Si tu as mis en place le cache, on le vide pour forcer le rafraîchissement
+      if (typeof abbyCache !== 'undefined') {
+        abbyCache.data = null;
       }
-    }
 
-    res.json({ success: true, updated: updateCount });
-  } catch (error: any) {
-    console.error("❌ Erreur lors de la Synchro Abby globale:", error.message);
-    res.status(500).json({ success: false, error: "Erreur de synchronisation Abby" });
-  }
-});
+      const abbyApi = getAbbyAxiosClient();
+      if (!abbyApi) {
+        return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
+      }
+
+      // 🎯 LA CORRECTION EST ICI : On ajoute les paramètres obligatoires (page et limit)
+      const response = await abbyApi.get('/v2/billings', { 
+        params: { page: 1, limit: 100, test: false } 
+      });
+      
+      const documents = response.data?.data || response.data?.docs || response.data || [];
+
+      const paidStatuses = ['paid', 'signed', 'accepted', 'encaissé'];
+      let updateCount = 0;
+
+      for (const doc of documents) {
+        if (paidStatuses.includes(doc.status?.toLowerCase())) {
+          const updateAcompte = await pool.query(
+            `UPDATE appointments SET deposit_status = 'Oui' WHERE abby_deposit_id = $1 AND deposit_status != 'Oui'`,
+            [doc.id]
+          );
+          updateCount += updateAcompte.rowCount || 0;
+
+          const updateFacture = await pool.query(
+            `UPDATE appointments SET project_status = 'Payé' WHERE abby_final_id = $1 AND project_status != 'Payé'`,
+            [doc.id]
+          );
+          updateCount += updateFacture.rowCount || 0;
+        }
+      }
+
+      res.json({ success: true, updated: updateCount });
+    } catch (error: any) {
+      console.error("❌ Erreur lors de la Synchro Abby globale:", error.message);
+      res.status(500).json({ success: false, error: "Erreur de synchronisation Abby" });
+    }
+  });
 
   app.all("/api/*", (req, res) => {
     console.error(`[404] Route introuvable bloquée : ${req.method} ${req.path}`);

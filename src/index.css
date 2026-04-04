@@ -20,3 +20,15 @@
 .btn-primary {
   @apply bg-[#D1B3FF] text-black font-semibold px-6 py-3 rounded-xl hover:bg-purple-300 transition-all active:scale-95;
 }
+
+/* --- Correction globale pour les listes déroulantes --- */
+option {
+  background-color: #0A0A0B; /* La couleur de fond de ton site */
+  color: #ffffff; /* Texte en blanc */
+}
+
+optgroup {
+  background-color: #141414; /* Légèrement plus clair pour les groupes */
+  color: #a855f7; /* Couleur lilas pour les titres de groupes */
+  font-weight: bold;
+}

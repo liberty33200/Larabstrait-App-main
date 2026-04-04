@@ -78,7 +78,6 @@ export const Sidebar = ({
             )}
           </AnimatePresence>
         </div>
-        <SidebarItem icon={AlertTriangle} label="Bug / Améliorations" active={activeTab === 'reports'} onClick={() => navigateTo('reports')} />
       </nav>
 
       <div className="pt-6 border-t border-white/5 space-y-2 mt-4">
