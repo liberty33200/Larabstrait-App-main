@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Edit2, Save, RefreshCw, AlertCircle, 
   Calendar, Clock, Wallet, CheckCircle2, Mail, Check, Trash2,
-  FileSignature, Download, PenTool, Link, X
+  FileSignature, Download, PenTool, Link, X, Plus
 } from 'lucide-react';
-import { ConsentFormView } from './ConsentFormView'; // 👈 NOTRE NOUVEL IMPORT MAGIQUE
+import { ConsentFormView } from './ConsentFormView';
 
 export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch }: any) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -40,6 +40,10 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
   });
 
   const [savingAbbyIds, setSavingAbbyIds] = useState(false);
+  // ✅ NOUVEAU : état de création par type de document
+  const [creating, setCreating] = useState<string | null>(null);
+  const [createResult, setCreateResult] = useState<{ type: string; status: 'success' | 'error'; message?: string } | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -115,7 +119,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
         client_phone: formData.phone,
         instagram: formData.instagram
       };
-
       const response = await apiFetch(`/api/appointments/${appointment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
       if (!response.ok) throw new Error("Erreur de mise à jour");
       onUpdate();
@@ -142,11 +145,59 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     } catch (err: any) { setError(err.message); } finally { setSavingAbbyIds(false); }
   };
 
+  // ✅ NOUVEAU : Création d'un document Abby depuis l'interface
+  const handleCreateDocument = async (type: string) => {
+    setCreating(type);
+    setCreateResult(null);
+    try {
+      const appointmentPayload = {
+        id: appointment.id,
+        client_name: appointment.client,
+        client_email: appointment.clientEmail,
+        total_price: appointment.total,
+        appointment_date: appointment.appointment_date,
+      };
+
+      const res = await apiFetch('/api/abby/create-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment: appointmentPayload, type })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || "Erreur inconnue");
+      }
+
+      // Mise à jour locale de l'état pour afficher l'ID immédiatement
+      const newId = data.data?.id;
+      if (newId) {
+        if (type === "Bon de commande") setAbbyIds(prev => ({ ...prev, bdc: newId }));
+        if (type === "Facture d'acompte") setAbbyIds(prev => ({ ...prev, deposit: newId }));
+        if (type === "Facture finale") setAbbyIds(prev => ({ ...prev, final: newId }));
+
+        // Rafraîchir la liste des docs Abby pour que le select affiche le nouveau doc
+        const resDocs = await apiFetch('/api/abby/documents');
+        if (resDocs.ok) setAllAbbyDocs(await resDocs.json());
+      }
+
+      setCreateResult({ type, status: 'success' });
+      setTimeout(() => setCreateResult(null), 4000);
+
+    } catch (err: any) {
+      console.error("Erreur création document Abby:", err.message);
+      setCreateResult({ type, status: 'error', message: err.message });
+      setTimeout(() => setCreateResult(null), 6000);
+    } finally {
+      setCreating(null);
+    }
+  };
+
   const handleDelete = async () => {
     setSaving(true); setError(null); setShowDeleteConfirm(false);
     try {
       await apiFetch(`/api/appointments/${appointment.id}`, { method: 'DELETE' });
-      // On utilise onUpdate() au lieu de onBack() pour forcer le rafraîchissement !
       onUpdate(); 
     } catch (err: any) { 
       setError(err.message); 
@@ -169,24 +220,79 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     const oth = otherDocs.filter(d => types.some(t => d.type.includes(t)));
 
     return (
-      <div>
-        <label className="text-xs text-gray-400 mb-1 block">{label}</label>
-        <select 
-          value={value} 
-          onChange={onChange} 
-          className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-emerald-500/50"
-        >
-          <option value="">-- Non lié --</option>
-          {isCurrentInDocs && <option value={value}>{value} (ID actuel conservé)</option>}
-          {sugg.length > 0 && (
-            <optgroup label={`Suggérés pour ${appointment.client}`}>
-              {sugg.map(d => <option key={d.internalId} value={d.internalId}>{d.client} : {d.id} - {d.amount}€ ({d.statusLabel})</option>)}
-            </optgroup>
-          )}
-          <optgroup label="Autres documents récents">
-            {oth.map(d => <option key={d.internalId} value={d.internalId}>{d.client} : {d.id} - {d.amount}€ ({d.statusLabel})</option>)}
+      <select 
+        value={value} 
+        onChange={onChange} 
+        className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-emerald-500/50 min-w-0"
+      >
+        <option value="">-- Non lié --</option>
+        {isCurrentInDocs && <option value={value}>{value} (ID actuel conservé)</option>}
+        {sugg.length > 0 && (
+          <optgroup label={`Suggérés pour ${appointment.client}`}>
+            {sugg.map(d => <option key={d.internalId} value={d.internalId}>{d.client} : {d.id} - {d.amount}€ ({d.statusLabel})</option>)}
           </optgroup>
-        </select>
+        )}
+        <optgroup label="Autres documents récents">
+          {oth.map(d => <option key={d.internalId} value={d.internalId}>{d.client} : {d.id} - {d.amount}€ ({d.statusLabel})</option>)}
+        </optgroup>
+      </select>
+    );
+  };
+
+  // ✅ NOUVEAU : Rendu d'une ligne avec select + bouton Créer
+  const renderDocRow = (
+    label: string,
+    docType: string,
+    value: string,
+    onChange: any,
+    types: string[],
+    alreadyExists: boolean
+  ) => {
+    const isCreating = creating === docType;
+    const result = createResult?.type === docType ? createResult : null;
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-gray-400">{label}</label>
+          {/* Badge de résultat de création */}
+          {result && (
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              result.status === 'success' 
+                ? 'bg-emerald-500/10 text-emerald-400' 
+                : 'bg-rose-500/10 text-rose-400'
+            }`}>
+              {result.status === 'success' ? '✓ Créé !' : `✗ ${result.message}`}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Select de liaison */}
+          {renderDocSelect(label, value, onChange, types)}
+
+          {/* ✅ Bouton Créer */}
+          <button
+            onClick={() => handleCreateDocument(docType)}
+            disabled={isCreating || alreadyExists}
+            title={alreadyExists ? "Document déjà créé" : `Créer un(e) ${docType} sur Abby`}
+            className={`shrink-0 flex items-center space-x-1.5 px-3 py-3 rounded-xl text-xs font-bold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              alreadyExists
+                ? 'bg-white/5 border-white/10 text-gray-500'
+                : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/20 text-emerald-400'
+            }`}
+          >
+            {isCreating 
+              ? <RefreshCw size={14} className="animate-spin" />
+              : alreadyExists 
+                ? <Check size={14} />
+                : <Plus size={14} />
+            }
+            <span className="hidden sm:inline">
+              {isCreating ? 'Création...' : alreadyExists ? 'Créé' : 'Créer'}
+            </span>
+          </button>
+        </div>
       </div>
     );
   };
@@ -307,20 +413,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   <span className="text-gray-400">Tarif Total</span>
                   {isEditing ? (
                     <div className="relative w-32">
-                      <input 
-                        type="number" 
-                        value={formData.total || ''} 
-                        onChange={(e) => { 
-                          const val = e.target.value; 
-                          const newTotal = val === '' ? 0 : parseFloat(val); 
-                          setFormData({ 
-                            ...formData, 
-                            total: newTotal, 
-                            depositAmount: formData.deposit === 'Dispensé' ? 0 : calculateDefaultDeposit(newTotal) 
-                          }); 
-                        }} 
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-right focus:outline-none focus:border-lilas/50" 
-                      />
+                      <input type="number" value={formData.total || ''} onChange={(e) => { const val = e.target.value; const newTotal = val === '' ? 0 : parseFloat(val); setFormData({ ...formData, total: newTotal, depositAmount: formData.deposit === 'Dispensé' ? 0 : calculateDefaultDeposit(newTotal) }); }} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-right focus:outline-none focus:border-lilas/50" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">€</span>
                     </div>
                   ) : <span className="text-2xl font-bold text-lilas">{appointment.total}€</span>}
@@ -329,18 +422,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Acompte versé</span>
                   {isEditing ? (
-                    <select 
-                      value={formData.deposit} 
-                      onChange={(e) => { 
-                        const newDeposit = e.target.value;
-                        setFormData({ 
-                          ...formData, 
-                          deposit: newDeposit, 
-                          depositAmount: newDeposit === 'Dispensé' ? 0 : (formData.depositAmount || calculateDefaultDeposit(formData.total)) 
-                        }); 
-                      }} 
-                      className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 focus:outline-none"
-                    >
+                    <select value={formData.deposit} onChange={(e) => { const newDeposit = e.target.value; setFormData({ ...formData, deposit: newDeposit, depositAmount: newDeposit === 'Dispensé' ? 0 : (formData.depositAmount || calculateDefaultDeposit(formData.total)) }); }} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 focus:outline-none">
                       <option value="Oui">Oui</option><option value="Non">Non</option><option value="Dispensé">Dispensé</option>
                     </select>
                   ) : <span className={`font-bold ${formData.deposit === 'Oui' ? 'text-emerald-400' : formData.deposit === 'Dispensé' ? 'text-purple-400' : 'text-rose-400'}`}>{formData.deposit}</span>}
@@ -350,13 +432,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   <span className="text-gray-400">Montant Acompte</span>
                   {isEditing ? (
                     <div className="relative w-32">
-                      <input 
-                        type="number" 
-                        disabled={formData.deposit === 'Dispensé'}
-                        value={formData.depositAmount} 
-                        onChange={(e) => setFormData({...formData, depositAmount: parseFloat(e.target.value) || 0})} 
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-right focus:outline-none focus:border-lilas/50 disabled:opacity-50" 
-                      />
+                      <input type="number" disabled={formData.deposit === 'Dispensé'} value={formData.depositAmount} onChange={(e) => setFormData({...formData, depositAmount: parseFloat(e.target.value) || 0})} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-right focus:outline-none focus:border-lilas/50 disabled:opacity-50" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">€</span>
                     </div>
                   ) : <span className="font-medium">{appointment.depositAmount}€</span>}
@@ -376,23 +452,47 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
               </div>
             </div>
 
+            {/* ✅ SECTION LIAISONS ABBY AVEC BOUTONS CRÉER */}
             <div className="glass-card p-6 border-t-4 border-emerald-500/50">
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4">
-                <Link size={12} /><span>Liaisons Abby (Sélecteur intelligent)</span>
+                <Link size={12} /><span>Liaisons Abby</span>
               </label>
               
               <div className="space-y-4">
                 {isLoadingDocs ? (
                   <div className="text-center py-4 text-emerald-500 flex items-center justify-center space-x-2">
-                    <RefreshCw className="animate-spin" size={16} /> <span>Recherche de factures...</span>
+                    <RefreshCw className="animate-spin" size={16} /> <span>Chargement des documents...</span>
                   </div>
                 ) : (
                   <>
-                    {renderDocSelect("Bon de commande (Devis)", abbyIds.bdc, (e: any) => setAbbyIds({...abbyIds, bdc: e.target.value}), ["Bon de commande", "Devis"])}
-                    {renderDocSelect("Facture d'acompte", abbyIds.deposit, (e: any) => setAbbyIds({...abbyIds, deposit: e.target.value}), ["Facture d'acompte", "Facture"])}
-                    {renderDocSelect("Facture finale", abbyIds.final, (e: any) => setAbbyIds({...abbyIds, final: e.target.value}), ["Facture"])}
+                    {renderDocRow(
+                      "Bon de commande",
+                      "Bon de commande",
+                      abbyIds.bdc,
+                      (e: any) => setAbbyIds({...abbyIds, bdc: e.target.value}),
+                      ["Bon de commande", "Devis"],
+                      !!abbyIds.bdc
+                    )}
+
+                    {renderDocRow(
+                      "Facture d'acompte",
+                      "Facture d'acompte",
+                      abbyIds.deposit,
+                      (e: any) => setAbbyIds({...abbyIds, deposit: e.target.value}),
+                      ["Facture d'acompte", "Facture"],
+                      !!abbyIds.deposit
+                    )}
+
+                    {renderDocRow(
+                      "Facture finale",
+                      "Facture finale",
+                      abbyIds.final,
+                      (e: any) => setAbbyIds({...abbyIds, final: e.target.value}),
+                      ["Facture"],
+                      !!abbyIds.final
+                    )}
                     
-                    <button onClick={handleSaveAbbyIds} disabled={savingAbbyIds} className="w-full mt-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-sm font-bold flex items-center justify-center space-x-2">
+                    <button onClick={handleSaveAbbyIds} disabled={savingAbbyIds} className="w-full mt-2 py-3 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-sm font-bold flex items-center justify-center space-x-2">
                       {savingAbbyIds ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
                       <span>Enregistrer les liaisons</span>
                     </button>
@@ -411,20 +511,12 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   <div className="w-full py-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl text-sm font-bold flex items-center justify-center space-x-2">
                     <CheckCircle2 size={16} /><span>Décharge signée</span>
                   </div>
-                  <a 
-                    href={`/api/appointments/${appointment.id}/download-consent`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-3 bg-purple-500/10 text-purple-400 hover:bg-purple-500 hover:text-white border border-purple-500/20 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2"
-                  >
+                  <a href={`/api/appointments/${appointment.id}/download-consent`} target="_blank" rel="noopener noreferrer" className="w-full py-3 bg-purple-500/10 text-purple-400 hover:bg-purple-500 hover:text-white border border-purple-500/20 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2">
                     <Download size={16} /><span>Télécharger le PDF</span>
                   </a>
                 </div>
               ) : (
-                <button 
-                  onClick={() => setShowConsentModal(true)}
-                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2"
-                >
+                <button onClick={() => setShowConsentModal(true)} className="w-full py-3 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2">
                   <PenTool size={16} /><span>Faire signer la décharge</span>
                 </button>
               )}
@@ -469,10 +561,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
           <ConsentFormView 
             appointment={appointment} 
             onClose={() => setShowConsentModal(false)} 
-            onSaved={() => {
-              setShowConsentModal(false);
-              setHasConsent(true);
-            }} 
+            onSaved={() => { setShowConsentModal(false); setHasConsent(true); }} 
             apiFetch={apiFetch} 
           />
         )}

@@ -50,9 +50,9 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     .filter((appt: any) => (appt.rawDate || 0) > 0 && (appt.rawDate || 0) < today)
     .sort((a: any, b: any) => (b.rawDate || 0) - (a.rawDate || 0));
   
-  // 🗂️ 1. DESSINS À PRÉPARER
+  // 🗂️ 1. DESSINS À PRÉPARER (Corrigé !)
   const drawingsToDo = upcomingAppointments.filter((appt: any) => 
-    appt.projectStatus === 'À dessiner' || appt.projectStatus === 'À modifier'
+    appt.projectStatus !== 'Validé' && appt.projectStatus !== 'Non nécessaire'
   );
   
   // 🗂️ 2. VÉRIFIER FACTURATION
@@ -142,30 +142,6 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         ))}
       </div>
 
-      {drawingsToDo.length > 0 && (
-        <section className="mb-10">
-          <div className="flex justify-between items-center mb-6">
-            <div className="flex items-center space-x-3"><div className="w-1 h-6 bg-blue-500 rounded-full" /><h3 className="text-xl md:text-2xl font-bold tracking-tight text-blue-500">Dessins à préparer</h3></div>
-          </div>
-          <div className="space-y-4">
-            {drawingsToDo.map((appt: any, i: number) => (
-              <motion.div key={`draw-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-blue-500/30">
-                <div className="flex items-center space-x-5">
-                  <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-bold text-lg border border-blue-500/20 shrink-0"><PenTool size={20} /></div>
-                  <div className="min-w-0">
-                    <h4 className="font-semibold text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-xs text-gray-500 truncate w-full mt-1">{appt.projectRecap || 'Aucun détail'}</p></div>
-                <div className="hidden md:flex justify-center"><div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${appt.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>{appt.projectStatus}</div></div>
-                <div className="hidden sm:flex justify-end"><button className="p-2 text-gray-500 hover:text-white transition-colors"><ChevronRight size={20} /></button></div>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {toVerifyBilling.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
@@ -225,6 +201,39 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                 </motion.div>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {drawingsToDo.length > 0 && (
+        <section className="mb-10">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center space-x-3"><div className="w-1 h-6 bg-blue-500 rounded-full" /><h3 className="text-xl md:text-2xl font-bold tracking-tight text-blue-500">Dessins à préparer</h3></div>
+          </div>
+          <div className="space-y-4">
+            {drawingsToDo.map((appt: any, i: number) => (
+              <motion.div key={`draw-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-blue-500/30">
+                <div className="flex items-center space-x-5">
+                  <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-bold text-lg border border-blue-500/20 shrink-0"><PenTool size={20} /></div>
+                  <div className="min-w-0">
+                    <h4 className="font-semibold text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
+                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-xs text-gray-500 truncate w-full mt-1">{appt.projectRecap || 'Aucun détail'}</p></div>
+                <div className="hidden md:flex justify-center">
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${
+                    appt.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
+                    appt.projectStatus === 'Envoyé' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 
+                    appt.projectStatus === 'Dessiné' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                    'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                  }`}>
+                    {appt.projectStatus}
+                  </div>
+                </div>
+                <div className="hidden sm:flex justify-end"><button className="p-2 text-gray-500 hover:text-white transition-colors"><ChevronRight size={20} /></button></div>
+              </motion.div>
+            ))}
           </div>
         </section>
       )}

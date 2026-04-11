@@ -53,13 +53,23 @@ pool.connect(async (err, client, release) => {
   if (err) return console.error("❌ Erreur de connexion Postgres:", err.stack);
   console.log("🐘 Connecté avec succès à PostgreSQL !");
   
-  // Sécurité : On s'assure que les colonnes ajoutées récemment existent bien dans PostgreSQL
-  try {
-    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS location TEXT`);
-    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS size TEXT`);
-    await client.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS instagram TEXT`);
-  } catch (e) {
-    // Les colonnes existent peut-être déjà, on ignore silencieusement
+  // Sécurité : On s'assure que toutes les colonnes nécessaires existent
+  const columnsToAdd = [
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS location TEXT`,
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS size TEXT`,
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS instagram TEXT`,
+    // ✅ NOUVEAU : Colonnes pour les liaisons Abby
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_bdc_id TEXT`,
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_deposit_id TEXT`,
+    `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_final_id TEXT`,
+  ];
+
+  for (const query of columnsToAdd) {
+    try {
+      await client.query(query);
+    } catch (e) {
+      // La colonne existe déjà, on ignore
+    }
   }
   
   release();
@@ -127,51 +137,49 @@ function getAbbyAxiosClient(): AxiosInstance | null {
   });
 }
 
+// ✅ CORRIGÉ : Recherche par email via le param `search`, création avec firstname/lastname séparés
 async function getOrCreateAbbyClient(abbyApi: AxiosInstance, rawName: string, rawEmail: string): Promise<string> {
   const cleanEmail = (rawEmail || "").trim().toLowerCase();
-  const cleanName = (rawName || "Client Inconnu").replace(/^Client\s+/i, '').trim();
-  
-  const names = cleanName.split(" ");
-  const lastname = names.length > 1 ? names.slice(1).join(" ") : (names[0] || "Inconnu");
-  const firstname = names.length > 1 ? names[0] : "";
+  const nameParts = (rawName || "Client Inconnu").trim().split(" ");
+  const firstname = nameParts[0] || "Client";
+  const lastname = nameParts.slice(1).join(" ") || "Inconnu";
 
+  // 1. Recherche par email via le paramètre `search`
   if (cleanEmail) {
     try {
-      console.log(`🔍 Téléchargement des contacts pour chercher ${cleanEmail}...`);
-      
-      const { data: searchResult } = await abbyApi.get("/contacts", { params: { limit: 100 } });
-      const contactsList = searchResult?.data || searchResult?.docs || searchResult || [];
-      
-      const found = Array.isArray(contactsList) ? contactsList.find((c: any) => {
-        const email1 = c.email ? c.email.toLowerCase().trim() : "";
-        const emailsArray = Array.isArray(c.emails) ? c.emails.map((e:string) => e.toLowerCase().trim()) : [];
-        return email1 === cleanEmail || emailsArray.includes(cleanEmail);
-      }) : null;
-
+      console.log(`🔍 Recherche du contact Abby pour : ${cleanEmail}`);
+      const { data } = await abbyApi.get("/contacts", {
+        params: { page: 1, limit: 50, search: cleanEmail }
+      });
+      const contacts = data?.docs || [];
+      const found = contacts.find((c: any) =>
+        (c.emails || []).some((e: string) => e.toLowerCase().trim() === cleanEmail)
+      );
       if (found) {
-        console.log(`✅ Client existant trouvé sur Abby ! ID : ${found.id}`);
+        console.log(`✅ Contact existant trouvé : ${found.id}`);
         return found.id;
       }
     } catch (e: any) {
-      console.error("❌ Le serveur d'Abby n'a pas répondu à la recherche :", e.message);
-      throw new Error("Serveur Abby inaccessible");
+      console.error("❌ Erreur recherche contact Abby :", e.response?.data || e.message);
+      throw new Error("Serveur Abby inaccessible lors de la recherche.");
     }
   }
 
-  console.log(`🆕 Client introuvable en base. Création en cours pour : ${cleanName}...`);
+  // 2. Création du contact si introuvable
+  console.log(`🆕 Création d'un nouveau contact Abby : ${firstname} ${lastname}`);
   try {
     const { data: newContact } = await abbyApi.post("/contact", {
-      firstname: firstname,
-      lastname: lastname,
-      emails: [cleanEmail]
+      firstname,
+      lastname,
+      emails: cleanEmail ? [cleanEmail] : []
     });
-    
-    const newId = newContact?.data?.id || newContact?.id;
-    console.log(`✅ Nouveau client créé ! ID : ${newId}`);
+    const newId = newContact?.id;
+    if (!newId) throw new Error("Abby n'a pas renvoyé d'ID pour le nouveau contact.");
+    console.log(`✅ Nouveau contact créé : ${newId}`);
     return newId;
   } catch (error: any) {
-    console.error("❌ Échec de la création du client Abby:", error.response?.data || error.message);
-    throw new Error("Impossible de créer le client dans Abby.");
+    console.error("❌ Échec création contact Abby :", error.response?.data || error.message);
+    throw new Error("Impossible de créer le contact dans Abby.");
   }
 }
 
@@ -420,7 +428,7 @@ async function startServer() {
 
 
   // ==========================================
-  // --- NOUVELLES ROUTES PURES POSTGRESQL ---
+  // --- ROUTES POSTGRESQL (Rendez-vous) ---
   // ==========================================
   app.get("/api/appointments", async (req, res) => {
     try {
@@ -477,7 +485,6 @@ async function startServer() {
       const values = [];
       let i = 1;
 
-      // On met à jour uniquement si la donnée est fournie
       if (data.client_name !== undefined) { updates.push(`client_name = $${i++}`); values.push(data.client_name); }
       if (data.client_email !== undefined) { updates.push(`client_email = $${i++}`); values.push(data.client_email); }
       if (data.client_phone !== undefined) { updates.push(`client_phone = $${i++}`); values.push(data.client_phone); }
@@ -491,7 +498,6 @@ async function startServer() {
       if (data.location !== undefined) { updates.push(`location = $${i++}`); values.push(data.location); }
       if (data.size !== undefined) { updates.push(`size = $${i++}`); values.push(data.size); }
       if (data.instagram !== undefined) { updates.push(`instagram = $${i++}`); values.push(data.instagram); }
-      
       if (data.abby_bdc_id !== undefined) { updates.push(`abby_bdc_id = $${i++}`); values.push(data.abby_bdc_id); }
       if (data.abby_deposit_id !== undefined) { updates.push(`abby_deposit_id = $${i++}`); values.push(data.abby_deposit_id); }
       if (data.abby_final_id !== undefined) { updates.push(`abby_final_id = $${i++}`); values.push(data.abby_final_id); }
@@ -516,118 +522,89 @@ async function startServer() {
   });
 
   app.get('/api/settings/abby', (req, res) => { res.json({ abby_api_key: !!getAbbyApiKey() }); });
+
   // =========================================================================
   // --- GESTION DES PDF DE DÉCHARGE ET FICHES DE SOINS ---
   // =========================================================================
   const consentsDir = path.join(process.cwd(), 'data', 'consents');
   if (!fs.existsSync(consentsDir)) fs.mkdirSync(consentsDir, { recursive: true });
 
-  // 1. Sauvegarder la décharge signée
   app.post('/api/appointments/:id/consent', express.json({limit: '50mb'}), async (req, res) => {
     try {
       const { pdfData } = req.body;
       if (!pdfData) return res.status(400).json({ error: "Données PDF manquantes" });
-      
-      // On nettoie l'en-tête base64 pour obtenir le fichier pur
       const base64Data = pdfData.replace(/^data:application\/pdf;filename=generated\.pdf;base64,/, "").replace(/^data:application\/pdf;base64,/, "");
-      
       const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
       fs.writeFileSync(filePath, base64Data, 'base64');
-      
       res.json({ success: true });
     } catch (error: any) {
-      console.error("❌ Erreur sauvegarde PDF:", error.message);
       res.status(500).json({ error: "Erreur lors de la sauvegarde du PDF" });
     }
   });
 
-  // 2. Vérifier si une décharge existe pour ce RDV
   app.get('/api/appointments/:id/check-consent', (req, res) => {
     const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
     res.json({ exists: fs.existsSync(filePath) });
   });
 
-  // 3. Télécharger la décharge
   app.get('/api/appointments/:id/download-consent', (req, res) => {
     const filePath = path.join(consentsDir, `${req.params.id}.pdf`);
     if (fs.existsSync(filePath)) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="decharge-${req.params.id}.pdf"`);
-      const stream = fs.createReadStream(filePath);
-      stream.pipe(res);
+      fs.createReadStream(filePath).pipe(res);
     } else {
       res.status(404).send("Document introuvable");
     }
   });
 
-  // 4. Envoi de la fiche de soins par email (Ancien système avec pièce jointe)
   app.post('/api/appointments/:id/send-pdf', express.json(), async (req: any, res) => {
     try {
       const { clientEmail, clientName } = req.body;
-      
-      if (!clientEmail) {
-        return res.status(400).json({ error: "Email manquant" });
-      }
-
+      if (!clientEmail) return res.status(400).json({ error: "Email manquant" });
       const smtpPort = parseInt(process.env.SMTP_PORT || "465");
-
-      // On utilise nodemailer avec les variables d'environnement
       const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || "smtp.hostinger.com",
         port: smtpPort,
-        secure: smtpPort === 465, // 👈 LA CORRECTION EST ICI : true pour 465, false pour 587
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+        secure: smtpPort === 465,
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
-
-      // Le chemin absolu vers ton fichier PDF de soins
       const pdfPath = path.join(process.cwd(), 'public', 'Feuille_de_soins.pdf');
-
-      const mailOptions = {
+      await transporter.sendMail({
         from: `"Larabstrait" <${process.env.SMTP_USER}>`,
         to: clientEmail,
         subject: "Ta fiche de soins Larabstrait ✨",
         text: `Hello !\n\nSuite à notre séance voici, ci-joint, la feuille de soin comme convenu avec toutes les consignes à respecter durant la période de cicatrisation.\n\nJe reste disponible si besoin.\n\nÀ bientôt et bonne cicatrisation💫\n\nLara - Larabstrait`,
-        attachments: [
-          {
-            filename: 'Fiche_de_soins_Larabstrait.pdf',
-            path: pdfPath,
-            contentType: 'application/pdf'
-          }
-        ]
-      };
-
-      await transporter.sendMail(mailOptions);
+        attachments: [{ filename: 'Fiche_de_soins_Larabstrait.pdf', path: pdfPath, contentType: 'application/pdf' }]
+      });
       res.json({ success: true });
     } catch (error: any) {
-      console.error("❌ Erreur d'envoi d'email:", error.message);
       res.status(500).json({ error: "Erreur lors de l'envoi de l'email" });
     }
   });
 
   app.get("/api/bookings/timeoff", (req, res) => res.json([]));
 
+  // =========================================================================
+  // --- ABBY : LISTE DES DOCUMENTS (avec cache) ---
+  // =========================================================================
   app.get("/api/abby/documents", async (req: any, res) => {
     try {
       const abbyApi = getAbbyAxiosClient();
       if (!abbyApi) return res.json([]);
       
-      // 🚀 SYSTEME DE CACHE : On regarde si on a déjà l'info en mémoire (moins de 2 minutes)
       const now = Date.now();
       if (abbyCache.data && (now - abbyCache.lastFetch < ABBY_CACHE_DURATION)) {
-        return res.json(abbyCache.data); // Réponse instantanée !
+        return res.json(abbyCache.data);
       }
       
-      // Sinon, on va chercher chez Abby
       const resp = await abbyApi.get("/v2/billings", { params: { page: 1, limit: 100, test: false } });
       const rawDocs = resp.data?.data || resp.data?.docs || resp.data || [];
 
       const formattedDocs = (Array.isArray(rawDocs) ? rawDocs : []).map((doc: any) => {
         const docNumber = (doc.number || doc.id || "").toUpperCase();
         let docType = "Facture";
-        if (docNumber.startsWith("BDC")) docType = "Bon de commande";
+        if (docNumber.startsWith("BDC") || docNumber.startsWith("DEV")) docType = "Bon de commande";
         else if (docNumber.startsWith("AC")) docType = "Facture d'acompte";
         else if (docNumber.startsWith("DE") || doc.type === "estimate") docType = "Devis";
         
@@ -650,98 +627,131 @@ async function startServer() {
         };
       });
 
-      // 🚀 On sauvegarde dans le cache pour les prochains appels !
       abbyCache.data = formattedDocs;
       abbyCache.lastFetch = now;
-
       res.json(formattedDocs);
     } catch (error: any) { res.status(500).json({ error: "Erreur Abby", details: error.message }); }
   });
 
-// =========================================================================
-// --- CRÉATEUR DE DOCUMENT (DIRECT ABBY) ---
-// =========================================================================
-app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
-  const { appointment, type } = req.body;
+  // =========================================================================
+  // ✅ CORRIGÉ : CRÉATEUR DE DOCUMENT ABBY
+  // Flow correct : 1) Créer le doc vide  2) Ajouter les lignes
+  // =========================================================================
+  app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
+    const { appointment, type } = req.body;
 
-  try {
-    const abbyApi = getAbbyAxiosClient();
-    if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+    try {
+      const abbyApi = getAbbyAxiosClient();
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
 
-    const rawName = appointment.client_name || "Client Inconnu";
-    const rawEmail = appointment.client_email || "";
-    const customerId = await getOrCreateAbbyClient(abbyApi, rawName, rawEmail);
-
-    const totalAmount = Number(appointment.total_price) || 0;
-    let calculatedAmount = type === "Facture d'acompte" 
-      ? (totalAmount <= 200 ? 50 : totalAmount * 0.25)
-      : totalAmount;
-
-    const abbyResponse = await abbyApi.post("/v2/billings", {
-      customerId: customerId,
-      type: type === "Facture d'acompte" ? "invoice" : "invoice",
-      items: [{
-        title: `${type} - Tatouage le ${new Date(appointment.appointment_date).toLocaleDateString('fr-FR')}`,
-        price: Math.round(calculatedAmount * 100),
-        quantity: 1,
-        vatRate: 0 
-      }],
-      comment: `Lien RDV : ${appointment.id}`
-    });
-
-    const newAbbyId = abbyResponse.data?.id || abbyResponse.data?.data?.id;
-    if (!newAbbyId) throw new Error("Abby n'a pas renvoyé d'ID.");
-
-    if (type === "Facture d'acompte") {
-      await pool.query(
-        `UPDATE appointments SET abby_deposit_id = $1, deposit_amount = $2 WHERE id = $3`,
-        [newAbbyId, calculatedAmount, appointment.id]
+      // Étape 0 : Récupérer ou créer le contact Abby
+      const customerId = await getOrCreateAbbyClient(
+        abbyApi,
+        appointment.client_name || "Client Inconnu",
+        appointment.client_email || ""
       );
-    } else {
-      await pool.query(
-        `UPDATE appointments SET abby_final_id = $1 WHERE id = $2`,
-        [newAbbyId, appointment.id]
-      );
+
+      // Calcul du montant selon le type
+      const totalAmount = Number(appointment.total_price) || 0;
+      let amount = totalAmount;
+      if (type === "Facture d'acompte") {
+        amount = totalAmount > 0 && totalAmount <= 200 ? 50 : Math.round(totalAmount * 0.25);
+      }
+
+      const dateLabel = appointment.appointment_date
+        ? new Date(appointment.appointment_date).toLocaleDateString('fr-FR')
+        : "date inconnue";
+
+      // ✅ Étape 1 : Créer le document vide avec le bon endpoint
+      let createEndpoint: string;
+      if (type === "Bon de commande") {
+        createEndpoint = `/v2/billing/estimate/${customerId}`;
+      } else {
+        // "Facture d'acompte" et "Facture finale" → invoice
+        createEndpoint = `/v2/billing/invoice/${customerId}`;
+      }
+
+      console.log(`📄 Création document Abby [${type}] sur ${createEndpoint}...`);
+      const { data: newDoc } = await abbyApi.post(createEndpoint);
+      const docId = newDoc?.id;
+      if (!docId) throw new Error("Abby n'a pas renvoyé d'ID de document après la création.");
+      console.log(`✅ Document créé : ${docId}`);
+
+      // ✅ Étape 2 : Ajouter les lignes avec le bon format
+      console.log(`📝 Ajout des lignes au document ${docId}...`);
+      await abbyApi.patch(`/v2/billing/${docId}/lines`, {
+        lines: [{
+          designation: `${type} - Tatouage du ${dateLabel}`,
+          unitPrice: Math.round(amount * 100), // ✅ en centimes
+          quantity: 1,
+          quantityUnit: 14,    // UNIT
+          type: 1,             // SERVICE
+          vatCode: "FR_00HT"   // ✅ 0% TVA (auto-entrepreneur)
+        }]
+      });
+      console.log(`✅ Lignes ajoutées au document ${docId}`);
+
+      // Étape 3 : Sauvegarder l'ID dans PostgreSQL et invalider le cache
+      abbyCache.data = null;
+
+      if (type === "Bon de commande") {
+        await pool.query(
+          `UPDATE appointments SET abby_bdc_id = $1 WHERE id = $2`,
+          [docId, appointment.id]
+        );
+      } else if (type === "Facture d'acompte") {
+        await pool.query(
+          `UPDATE appointments SET abby_deposit_id = $1, deposit_amount = $2 WHERE id = $3`,
+          [docId, amount, appointment.id]
+        );
+      } else {
+        // Facture finale
+        await pool.query(
+          `UPDATE appointments SET abby_final_id = $1 WHERE id = $2`,
+          [docId, appointment.id]
+        );
+      }
+
+      res.json({ success: true, data: { id: docId, amount } });
+
+    } catch (error: any) {
+      const detail = error.response?.data?.message || error.response?.data || error.message;
+      console.error("❌ Erreur create-document Abby:", detail);
+      res.status(500).json({ error: "Erreur lors de la création sur Abby", detail });
     }
+  });
 
-    res.json({ success: true, data: { id: newAbbyId } });
+  // =========================================================================
+  // --- ENCAISSEUR ABBY ---
+  // =========================================================================
+  app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
+    const { abbyDocId, type, appointmentId } = req.body;
 
-  } catch (error: any) {
-    console.error("❌ Erreur Direct Abby Create:", error.response?.data || error.message);
-    res.status(500).json({ error: "Erreur lors de la création sur Abby" });
-  }
-});
+    try {
+      const abbyApi = getAbbyAxiosClient();
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
 
-// =========================================================================
-// --- ENCAISSEUR (DIRECT ABBY) ---
-// =========================================================================
-app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
-  const { abbyDocId, type, appointmentId } = req.body;
+      await abbyApi.post(`/v2/billings/${abbyDocId}/payments`, {
+        amount: 0,
+        paymentMethod: "cash",
+        paidAt: new Date().toISOString()
+      });
 
-  try {
-    const abbyApi = getAbbyAxiosClient();
-    if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+      if (type === "Facture d'acompte") {
+        await pool.query(
+          `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
+          [appointmentId]
+        );
+      }
 
-    await abbyApi.post(`/v2/billings/${abbyDocId}/payments`, {
-      amount: 0,
-      paymentMethod: "cash",
-      paidAt: new Date().toISOString()
-    });
+      abbyCache.data = null;
+      res.json({ success: true });
 
-    if (type === "Facture d'acompte") {
-      await pool.query(
-        `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
-        [appointmentId]
-      );
+    } catch (error: any) {
+      console.error("❌ Erreur Direct Abby Pay:", error.response?.data || error.message);
+      res.status(500).json({ error: "Erreur lors de l'encaissement sur Abby" });
     }
-
-    res.json({ success: true });
-
-  } catch (error: any) {
-    console.error("❌ Erreur Direct Abby Pay:", error.response?.data || error.message);
-    res.status(500).json({ error: "Erreur lors de l'encaissement sur Abby" });
-  }
-});
+  });
 
   app.get("/api/abby/documents/:id/pdf", async (req: any, res) => {
     try {
@@ -760,28 +770,21 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
       pdfResponse.data.pipe(res);
 
     } catch (error: any) {
-      console.error("[Abby PDF Error]:", error.response?.data || error.message);
       res.status(500).json({ error: "Erreur lors de la récupération du PDF Abby" });
     }
   });
 
+  // =========================================================================
+  // --- SYNCHRONISATION ABBY (statuts de paiement) ---
+  // =========================================================================
   app.post("/api/abby/sync", async (req, res) => {
     try {
-      // 🧹 Si tu as mis en place le cache, on le vide pour forcer le rafraîchissement
-      if (typeof abbyCache !== 'undefined') {
-        abbyCache.data = null;
-      }
+      abbyCache.data = null;
 
       const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) {
-        return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
-      }
+      if (!abbyApi) return res.status(400).json({ success: false, error: "Clé API Abby non configurée." });
 
-      // 🎯 LA CORRECTION EST ICI : On ajoute les paramètres obligatoires (page et limit)
-      const response = await abbyApi.get('/v2/billings', { 
-        params: { page: 1, limit: 100, test: false } 
-      });
-      
+      const response = await abbyApi.get('/v2/billings', { params: { page: 1, limit: 100, test: false } });
       const documents = response.data?.data || response.data?.docs || response.data || [];
 
       const paidStatuses = ['paid', 'signed', 'accepted', 'encaissé'];
@@ -789,29 +792,29 @@ app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
 
       for (const doc of documents) {
         if (paidStatuses.includes(doc.status?.toLowerCase())) {
-          const updateAcompte = await pool.query(
+          const r1 = await pool.query(
             `UPDATE appointments SET deposit_status = 'Oui' WHERE abby_deposit_id = $1 AND deposit_status != 'Oui'`,
             [doc.id]
           );
-          updateCount += updateAcompte.rowCount || 0;
+          updateCount += r1.rowCount || 0;
 
-          const updateFacture = await pool.query(
+          const r2 = await pool.query(
             `UPDATE appointments SET project_status = 'Payé' WHERE abby_final_id = $1 AND project_status != 'Payé'`,
             [doc.id]
           );
-          updateCount += updateFacture.rowCount || 0;
+          updateCount += r2.rowCount || 0;
         }
       }
 
       res.json({ success: true, updated: updateCount });
     } catch (error: any) {
-      console.error("❌ Erreur lors de la Synchro Abby globale:", error.message);
+      console.error("❌ Erreur Synchro Abby:", error.message);
       res.status(500).json({ success: false, error: "Erreur de synchronisation Abby" });
     }
   });
 
   app.all("/api/*", (req, res) => {
-    console.error(`[404] Route introuvable bloquée : ${req.method} ${req.path}`);
+    console.error(`[404] Route introuvable : ${req.method} ${req.path}`);
     res.status(404).json({ error: "Route API introuvable", path: req.path });
   });
 
