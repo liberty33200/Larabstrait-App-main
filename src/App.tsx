@@ -36,7 +36,11 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
+  
   const [showCreateForm, setShowCreateForm] = useState(false);
+  // ✅ NOUVEAU : Stocke la date pré-sélectionnée depuis le calendrier
+  const [initialDateForForm, setInitialDateForForm] = useState<string | null>(null); 
+  
   const [showTimeOffForm, setShowTimeOffForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
@@ -128,7 +132,6 @@ export default function App() {
 
       if (!apptsRes.ok || apptsData.error) throw new Error(`Rendez-vous: ${apptsData.details || apptsData.error}`);
 
-      // 🎯 LE COEUR DE LA MIGRATION : On lit PostgreSQL et on crée un objet propre
       const mappedAppts = (apptsData || []).map((appt: any) => {
         let clientName = appt.client_name || 'Client Inconnu';
         clientName = clientName.split(' ').map((word: string) => word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : '').join(' ');
@@ -150,8 +153,8 @@ export default function App() {
           instagram: appt.instagram || '',
           date: isValid ? dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date à définir',
           time: (isValid && !isTimeOff) ? dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h') : (isTimeOff ? 'Journée' : ''),
-          rawDate, // Utilisé pour le tri
-          appointment_date: appt.appointment_date, // Conservé pour les formulaires d'édition
+          rawDate, 
+          appointment_date: appt.appointment_date, 
           style: tattooType,
           total: Number(appt.total_price) || 0,
           deposit: depositLabel,
@@ -165,7 +168,6 @@ export default function App() {
           price: `${Number(appt.total_price) || 0} €`,
           isTimeOff,
           projectStatus: appt.project_status || 'À dessiner',
-          // IDs Abby
           abbyBdcId: appt.abby_bdc_id || null,
           abbyAcompteId: appt.abby_deposit_id || null,
           abbyFactureId: appt.abby_final_id || null
@@ -261,6 +263,7 @@ export default function App() {
   const navigateTo = (tab: string) => {
     setActiveTab(tab);
     setShowCreateForm(false);
+    setInitialDateForForm(null); // On reset la date au changement d'onglet
     setShowTimeOffForm(false);
     setSelectedAppointment(null);
     setIsMobileMenuOpen(false);
@@ -311,13 +314,31 @@ export default function App() {
 
         <AnimatePresence mode="wait">
           {showCreateForm ? (
-            <CreateAppointmentView key="create" clients={filteredClients} onBack={() => setShowCreateForm(false)} onCreated={() => { setShowCreateForm(false); fetchData(); }} apiFetch={apiFetch} />
+            <CreateAppointmentView 
+              key="create" 
+              clients={filteredClients} 
+              initialDate={initialDateForForm} // ✅ On passe la date ici
+              onBack={() => { setShowCreateForm(false); setInitialDateForForm(null); }} 
+              onCreated={() => { setShowCreateForm(false); setInitialDateForForm(null); fetchData(); }} 
+              apiFetch={apiFetch} 
+            />
           ) : showTimeOffForm ? (
             <CreateTimeOffView key="timeoff" onBack={() => setShowTimeOffForm(false)} onCreated={() => { setShowTimeOffForm(false); fetchData(); }} apiFetch={apiFetch} />
           ) : selectedAppointment ? (
             <AppointmentDetailView key="detail" appointment={selectedAppointment} onBack={() => setSelectedAppointment(null)} onUpdate={() => { setSelectedAppointment(null); fetchData(); }} apiFetch={apiFetch} />
           ) : activeTab === 'calendar' ? (
-            <CalendarView key="calendar" appointments={appointments} timeOffEvents={timeOffEvents} onSelectAppointment={setSelectedAppointment} onCreateAppointment={() => setShowCreateForm(true)} onCreateTimeOff={() => setShowTimeOffForm(true)} />
+            <CalendarView 
+              key="calendar" 
+              appointments={appointments} 
+              timeOffEvents={timeOffEvents} 
+              onSelectAppointment={setSelectedAppointment} 
+              onCreateAppointment={(dateString: string) => { 
+                // ✅ Quand on clique dans CalendarView, on stocke la date et on ouvre le formulaire
+                if (dateString) setInitialDateForForm(dateString);
+                setShowCreateForm(true); 
+              }} 
+              onCreateTimeOff={() => setShowTimeOffForm(true)} 
+            />
           ) : activeTab === 'accounting' ? (
             <AccountingView key="accounting" appointments={filteredAppointments} rules={accountingRules} loading={loading} />
           ) : activeTab === 'billing' ? (

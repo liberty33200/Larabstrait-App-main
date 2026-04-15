@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Edit2, Save, RefreshCw, AlertCircle, 
-  Calendar, Clock, Wallet, CheckCircle2, Mail, Check, Trash2,
-  FileSignature, Download, PenTool, Link, X, Plus
+  Wallet, CheckCircle2, Mail, Check, Trash2,
+  FileSignature, Download, PenTool, Link, CreditCard
 } from 'lucide-react';
 import { ConsentFormView } from './ConsentFormView';
 
@@ -40,10 +40,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
   });
 
   const [savingAbbyIds, setSavingAbbyIds] = useState(false);
-  // ✅ NOUVEAU : état de création par type de document
-  const [creating, setCreating] = useState<string | null>(null);
-  const [createResult, setCreateResult] = useState<{ type: string; status: 'success' | 'error'; message?: string } | null>(null);
-
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -53,6 +49,9 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
 
   const [allAbbyDocs, setAllAbbyDocs] = useState<any[]>([]);
   const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+
+  // État pour savoir quel document on est en train d'encaisser
+  const [encashingType, setEncashingType] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -145,52 +144,34 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     } catch (err: any) { setError(err.message); } finally { setSavingAbbyIds(false); }
   };
 
-  // ✅ NOUVEAU : Création d'un document Abby depuis l'interface
-  const handleCreateDocument = async (type: string) => {
-    setCreating(type);
-    setCreateResult(null);
+  const handleEncaissementMake = async (docType: string, docId: string) => {
+    const amount = docType === "Facture d'acompte" ? appointment.depositAmount : appointment.total;
+    if (!confirm(`Souhaites-tu encaisser la ${docType.toLowerCase()} via Make ?\n(Montant estimé: ${amount}€)`)) return;
+    
+    setEncashingType(docType);
     try {
-      const appointmentPayload = {
-        id: appointment.id,
-        client_name: appointment.client,
-        client_email: appointment.clientEmail,
-        total_price: appointment.total,
-        appointment_date: appointment.appointment_date,
-      };
-
-      const res = await apiFetch('/api/abby/create-document', {
+      const res = await apiFetch(`/api/appointments/${appointment.id}/encaisser`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment: appointmentPayload, type })
+        body: JSON.stringify({
+          abbyFactureId: docId,
+          clientName: appointment.client,
+          total: amount,
+          docType: docType
+        })
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Erreur inconnue");
+      
+      if (res.ok) {
+        alert("✅ Demande d'encaissement envoyée à Make avec succès !");
+        onUpdate();
+      } else {
+        throw new Error("Erreur serveur");
       }
-
-      // Mise à jour locale de l'état pour afficher l'ID immédiatement
-      const newId = data.data?.id;
-      if (newId) {
-        if (type === "Bon de commande") setAbbyIds(prev => ({ ...prev, bdc: newId }));
-        if (type === "Facture d'acompte") setAbbyIds(prev => ({ ...prev, deposit: newId }));
-        if (type === "Facture finale") setAbbyIds(prev => ({ ...prev, final: newId }));
-
-        // Rafraîchir la liste des docs Abby pour que le select affiche le nouveau doc
-        const resDocs = await apiFetch('/api/abby/documents');
-        if (resDocs.ok) setAllAbbyDocs(await resDocs.json());
-      }
-
-      setCreateResult({ type, status: 'success' });
-      setTimeout(() => setCreateResult(null), 4000);
-
-    } catch (err: any) {
-      console.error("Erreur création document Abby:", err.message);
-      setCreateResult({ type, status: 'error', message: err.message });
-      setTimeout(() => setCreateResult(null), 6000);
+    } catch (error) {
+      console.error(error);
+      alert("❌ Une erreur est survenue lors de l'envoi à Make.");
     } finally {
-      setCreating(null);
+      setEncashingType(null);
     }
   };
 
@@ -239,7 +220,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     );
   };
 
-  // ✅ NOUVEAU : Rendu d'une ligne avec select + bouton Créer
   const renderDocRow = (
     label: string,
     docType: string,
@@ -248,50 +228,47 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
     types: string[],
     alreadyExists: boolean
   ) => {
-    const isCreating = creating === docType;
-    const result = createResult?.type === docType ? createResult : null;
+    const isEncashingThis = encashingType === docType;
+
+    // Détermination du statut de paiement
+    let isPaid = false;
+    let canEncash = false;
+    
+    if (docType === "Facture d'acompte") {
+      isPaid = appointment.deposit === 'Oui';
+      canEncash = true;
+    } else if (docType === "Facture finale") {
+      isPaid = appointment.projectStatus === 'Payé';
+      canEncash = true;
+    }
 
     return (
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="text-xs text-gray-400">{label}</label>
-          {/* Badge de résultat de création */}
-          {result && (
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-              result.status === 'success' 
-                ? 'bg-emerald-500/10 text-emerald-400' 
-                : 'bg-rose-500/10 text-rose-400'
-            }`}>
-              {result.status === 'success' ? '✓ Créé !' : `✗ ${result.message}`}
-            </span>
-          )}
-        </div>
+        <label className="text-xs text-gray-400">{label}</label>
 
         <div className="flex items-center gap-2">
-          {/* Select de liaison */}
           {renderDocSelect(label, value, onChange, types)}
 
-          {/* ✅ Bouton Créer */}
-          <button
-            onClick={() => handleCreateDocument(docType)}
-            disabled={isCreating || alreadyExists}
-            title={alreadyExists ? "Document déjà créé" : `Créer un(e) ${docType} sur Abby`}
-            className={`shrink-0 flex items-center space-x-1.5 px-3 py-3 rounded-xl text-xs font-bold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-              alreadyExists
-                ? 'bg-white/5 border-white/10 text-gray-500'
-                : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/20 text-emerald-400'
-            }`}
-          >
-            {isCreating 
-              ? <RefreshCw size={14} className="animate-spin" />
-              : alreadyExists 
-                ? <Check size={14} />
-                : <Plus size={14} />
-            }
-            <span className="hidden sm:inline">
-              {isCreating ? 'Création...' : alreadyExists ? 'Créé' : 'Créer'}
-            </span>
-          </button>
+          {alreadyExists && canEncash && (
+            isPaid ? (
+              <span className="shrink-0 flex items-center space-x-1.5 px-3 py-3 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <CheckCircle2 size={14} />
+                <span className="hidden sm:inline">Payé</span>
+              </span>
+            ) : (
+              <button
+                onClick={() => handleEncaissementMake(docType, value)}
+                disabled={isEncashingThis}
+                title={`Encaisser la ${docType} via Make`}
+                className="shrink-0 flex items-center space-x-1.5 px-3 py-3 rounded-xl text-xs font-bold transition-all bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isEncashingThis ? <RefreshCw size={14} className="animate-spin" /> : <CreditCard size={14} />}
+                <span className="hidden sm:inline">
+                  {isEncashingThis ? 'En cours...' : 'Encaisser'}
+                </span>
+              </button>
+            )
+          )}
         </div>
       </div>
     );
@@ -389,11 +366,11 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">État du dessin</label>
                   {isEditing ? (
                     <select value={formData.projectStatus} onChange={(e) => setFormData({...formData, projectStatus: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-lilas/50 transition-all appearance-none">
-                      <option value="Non nécessaire">Non nécessaire</option><option value="À dessiner">À dessiner</option><option value="Dessiné">Dessiné</option><option value="Envoyé">Envoyé</option><option value="À modifier">À modifier</option><option value="Validé">Validé</option>
+                      <option value="Non nécessaire">Non nécessaire</option><option value="À dessiner">À dessiner</option><option value="Dessiné">Dessiné</option><option value="Envoyé">Envoyé</option><option value="À modifier">À modifier</option><option value="Validé">Validé</option><option value="Payé">Payé</option>
                     </select>
                   ) : (
                     <div className="flex items-center mt-1">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${appointment.projectStatus === 'Validé' || appointment.projectStatus === 'Non nécessaire' ? 'bg-emerald-500/10 text-emerald-400' : appointment.projectStatus === 'À dessiner' || appointment.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400' : 'bg-blue-500/10 text-blue-400'}`}>{appointment.projectStatus}</span>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${appointment.projectStatus === 'Validé' || appointment.projectStatus === 'Non nécessaire' ? 'bg-emerald-500/10 text-emerald-400' : appointment.projectStatus === 'Payé' ? 'bg-blue-500/10 text-blue-400' : appointment.projectStatus === 'À dessiner' || appointment.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400' : 'bg-blue-500/10 text-blue-400'}`}>{appointment.projectStatus}</span>
                     </div>
                   )}
                 </div>
@@ -452,7 +429,6 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
               </div>
             </div>
 
-            {/* ✅ SECTION LIAISONS ABBY AVEC BOUTONS CRÉER */}
             <div className="glass-card p-6 border-t-4 border-emerald-500/50">
               <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest flex items-center space-x-2 mb-4">
                 <Link size={12} /><span>Liaisons Abby</span>
@@ -465,32 +441,9 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                   </div>
                 ) : (
                   <>
-                    {renderDocRow(
-                      "Bon de commande",
-                      "Bon de commande",
-                      abbyIds.bdc,
-                      (e: any) => setAbbyIds({...abbyIds, bdc: e.target.value}),
-                      ["Bon de commande", "Devis"],
-                      !!abbyIds.bdc
-                    )}
-
-                    {renderDocRow(
-                      "Facture d'acompte",
-                      "Facture d'acompte",
-                      abbyIds.deposit,
-                      (e: any) => setAbbyIds({...abbyIds, deposit: e.target.value}),
-                      ["Facture d'acompte", "Facture"],
-                      !!abbyIds.deposit
-                    )}
-
-                    {renderDocRow(
-                      "Facture finale",
-                      "Facture finale",
-                      abbyIds.final,
-                      (e: any) => setAbbyIds({...abbyIds, final: e.target.value}),
-                      ["Facture"],
-                      !!abbyIds.final
-                    )}
+                    {renderDocRow("Bon de commande", "Bon de commande", abbyIds.bdc, (e: any) => setAbbyIds({...abbyIds, bdc: e.target.value}), ["Bon de commande", "Devis"], !!abbyIds.bdc)}
+                    {renderDocRow("Facture d'acompte", "Facture d'acompte", abbyIds.deposit, (e: any) => setAbbyIds({...abbyIds, deposit: e.target.value}), ["Facture d'acompte", "Facture"], !!abbyIds.deposit)}
+                    {renderDocRow("Facture finale", "Facture finale", abbyIds.final, (e: any) => setAbbyIds({...abbyIds, final: e.target.value}), ["Facture"], !!abbyIds.final)}
                     
                     <button onClick={handleSaveAbbyIds} disabled={savingAbbyIds} className="w-full mt-2 py-3 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-sm font-bold flex items-center justify-center space-x-2">
                       {savingAbbyIds ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
@@ -529,7 +482,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
                 <span>{emailStatus === 'idle' ? 'Envoi fiche de soins' : emailStatus === 'sending' ? 'Envoi en cours...' : emailStatus === 'success' ? 'Email envoyé !' : 'Erreur d\'envoi'}</span>
               </button>
             </div>
-
+            
             <div className="glass-card p-6 bg-rose-500/5 border border-rose-500/10">
               <button onClick={() => setShowDeleteConfirm(true)} disabled={saving} className="w-full flex items-center justify-center space-x-2 text-rose-400 hover:text-rose-300 transition-colors py-2 disabled:opacity-50">
                 <Trash2 size={18} /><span>Annuler le rendez-vous</span>

@@ -76,9 +76,10 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
   };
 
   const handleComplete = async () => {
-    if (!window.confirm("Le tatouage est terminé ? Ce RDV disparaîtra de la file d'attente.")) return;
+    if (!window.confirm("Le tatouage est terminé ? Ce RDV disparaîtra de la file d'attente et sera prêt pour la facturation.")) return;
     
     try {
+      // 1. On passe le flash en 'completed' dans SQLite pour le retirer de la file d'attente
       const updatedClientData = { ...selectedItem.client, paymentStatus, notes, status: 'completed' };
       await fetch(`/api/flashes/${selectedItem.id}`, {
         method: 'PATCH',
@@ -86,8 +87,35 @@ export const QueueView = ({ apiFetch }: { apiFetch: any }) => {
         body: JSON.stringify({ available: false, reservationDetails: updatedClientData })
       });
 
+      // 2. NOUVEAU : On met à jour le VRAI rendez-vous PostgreSQL pour qu'il apparaisse dans le Dashboard
+      const apptId = selectedItem.client.appointmentId;
+      if (apptId) {
+        // Détermination du statut de l'acompte
+        let finalDepositStatus = "Non";
+        if (paymentStatus === "Acompte") finalDepositStatus = "Oui";
+        if (paymentStatus === "Payé") finalDepositStatus = "Dispensé"; // Si tout est payé d'un coup, on dispense l'acompte
+
+        // Détermination du statut global
+        let finalProjectStatus = "Validé"; 
+        if (paymentStatus === "Payé") finalProjectStatus = "Payé";
+
+        await apiFetch(`/api/appointments/${apptId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            project_status: finalProjectStatus,
+            deposit_status: finalDepositStatus,
+            project_recap: `${selectedItem.title}\n\nNotes: ${notes}` // On ajoute les notes prises pendant la séance
+          })
+        });
+      }
+
       setSelectedItem(null);
       loadQueue();
+      
+      // Petit hack pour forcer le Dashboard en arrière-plan à se rafraîchir
+      window.dispatchEvent(new Event('focus')); 
+      
     } catch (error) {
       alert("Erreur lors de la clôture du RDV.");
     }

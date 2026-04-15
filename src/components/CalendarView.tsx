@@ -14,14 +14,15 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
 
   const weekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
+  // ✅ Palette de couleurs plus contrastée
   const legend = [
-    { label: 'Projet perso', color: 'bg-purple-500' },
-    { label: 'Flash', color: 'bg-blue-500' },
+    { label: 'Projet perso', color: 'bg-indigo-500' },
+    { label: 'Flash', color: 'bg-cyan-500' },
     { label: 'Retouches', color: 'bg-emerald-500' },
     { label: 'RDV Préparatoire', color: 'bg-amber-500' },
-    { label: 'Event', color: 'bg-fuchsia-500' },
-    { label: 'Cadeau', color: 'bg-rose-500' },
-    { label: 'Congé', color: 'bg-red-500' },
+    { label: 'Event', color: 'bg-rose-500' },
+    { label: 'Cadeau', color: 'bg-pink-400' },
+    { label: 'Congé', color: 'bg-red-600' },
   ];
 
   const year = currentDate.getFullYear();
@@ -30,13 +31,13 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
   const getTypeColor = (type: string, client?: string) => {
     const t = (type || '').toLowerCase();
     const c = (client || '').toLowerCase();
-    if (t.includes('timeoff') || t.includes('congé') || t.includes('indisponibilité') || c.includes('congé')) return { bg: 'bg-red-500', text: 'text-red-400', border: 'border-red-500/50' };
-    if (t.includes('projet perso')) return { bg: 'bg-purple-500', text: 'text-purple-400', border: 'border-purple-500/50' };
-    if (t.includes('flash')) return { bg: 'bg-blue-500', text: 'text-blue-400', border: 'border-blue-500/50' };
+    if (t.includes('timeoff') || t.includes('congé') || t.includes('indisponibilité') || c.includes('congé')) return { bg: 'bg-red-600', text: 'text-red-400', border: 'border-red-600/50' };
+    if (t.includes('projet perso')) return { bg: 'bg-indigo-500', text: 'text-indigo-400', border: 'border-indigo-500/50' };
+    if (t.includes('flash')) return { bg: 'bg-cyan-500', text: 'text-cyan-400', border: 'border-cyan-500/50' };
     if (t.includes('retouche')) return { bg: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-500/50' };
     if (t.includes('préparatoire')) return { bg: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-500/50' };
-    if (t.includes('event')) return { bg: 'bg-fuchsia-500', text: 'text-fuchsia-400', border: 'border-fuchsia-500/50' };
-    if (t.includes('cadeau')) return { bg: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-500/50' };
+    if (t.includes('event')) return { bg: 'bg-rose-500', text: 'text-rose-400', border: 'border-rose-500/50' };
+    if (t.includes('cadeau')) return { bg: 'bg-pink-400', text: 'text-pink-300', border: 'border-pink-400/50' };
     return { bg: 'bg-lilas', text: 'text-lilas', border: 'border-lilas/50' };
   };
 
@@ -132,6 +133,16 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
     return 'Journée entière';
   };
 
+  const handleCreateAppointmentForSelectedDate = () => {
+    if (onCreateAppointment) {
+      // ✅ On envoie la date sélectionnée (ex: '2026-04-15')
+      const dateString = new Date(selectedDate.getTime() - (selectedDate.getTimezoneOffset() * 60000))
+        .toISOString()
+        .split('T')[0];
+      onCreateAppointment(dateString);
+    }
+  };
+
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="min-h-full flex flex-col pb-20 md:pb-0">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 space-y-4 md:space-y-0">
@@ -155,7 +166,7 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
             <button onClick={prev} className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
               <ChevronRight size={20} className="rotate-180" />
             </button>
-            <button onClick={() => setCurrentDate(new Date())} className="px-3 py-2 text-gray-400 hover:text-white rounded-lg font-medium text-xs sm:text-sm">
+            <button onClick={() => { setCurrentDate(new Date()); setSelectedDate(new Date()); }} className="px-3 py-2 text-gray-400 hover:text-white rounded-lg font-medium text-xs sm:text-sm">
               Aujourd'hui
             </button>
             <button onClick={next} className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
@@ -228,7 +239,7 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
                             );
                           })}
                           {dayTimeOff.slice(0, 2).map((off: any, idx: number) => (
-                            <div key={`off-${idx}`} className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-red-500/60 shadow-sm`} title={off.title || off.client}></div>
+                            <div key={`off-${idx}`} className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-red-600/60 shadow-sm`} title={off.title || off.client}></div>
                           ))}
                           {(dayAppts.length + dayTimeOff.length) > 4 && (
                             <div className="text-[7px] md:text-[9px] text-gray-500 font-black leading-none self-center">
@@ -282,7 +293,7 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
                       
                       <div className="flex-1 space-y-1 overflow-y-auto max-h-[500px] pr-1 custom-scrollbar">
                         {dayTimeOff.map((off: any, idx: number) => (
-                          <div key={`off-${idx}`} className="p-1.5 bg-red-500/5 border border-dashed border-red-500/20 rounded-lg text-[9px] text-red-400/70 font-bold opacity-70">
+                          <div key={`off-${idx}`} className="p-1.5 bg-red-600/5 border border-dashed border-red-600/20 rounded-lg text-[9px] text-red-400/70 font-bold opacity-70">
                             {off.title || off.client || 'Congé'}
                           </div>
                         ))}
@@ -317,7 +328,7 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
         </div>
 
         <div className="glass-card p-5 md:p-6 flex flex-col border-lilas/10">
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <h3 className="font-bold text-xl flex items-center space-x-3">
               <div className="w-10 h-10 rounded-xl bg-lilas/10 flex items-center justify-center text-lilas">
                 <Calendar size={20} />
@@ -332,13 +343,33 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
             </div>
           </div>
           
+          {/* ✅ BOUTONS D'ACTION EN HAUT */}
+          <div className="flex gap-2 mb-6 border-b border-white/5 pb-6">
+            <button 
+              onClick={handleCreateAppointmentForSelectedDate}
+              className="flex-1 py-3 bg-lilas text-black hover:bg-lilas/90 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2 shadow-lg shadow-lilas/10"
+            >
+              <Plus size={16} />
+              <span>RDV</span>
+            </button>
+
+            <button 
+              onClick={() => onCreateTimeOff && onCreateTimeOff()}
+              className="flex-1 py-3 bg-white/5 text-gray-300 hover:bg-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-center space-x-2 border border-white/5"
+            >
+              <Plane size={16} />
+              <span>Congé</span>
+            </button>
+          </div>
+
+          {/* LISTE DES RENDEZ-VOUS */}
           <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[300px]">
             {selectedDayTimeOff.length > 0 && (
               <div className="mb-4 space-y-2">
                 <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-widest px-1">Indisponibilités</p>
                 {selectedDayTimeOff.map((off: any, idx: number) => (
-                  <div key={off.id || `off-${idx}`} className="p-3 bg-red-500/5 border border-dashed border-red-500/20 rounded-xl flex items-center space-x-3 opacity-80 hover:opacity-100 transition-opacity">
-                    <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+                  <div key={off.id || `off-${idx}`} className="p-3 bg-red-600/5 border border-dashed border-red-600/20 rounded-xl flex items-center space-x-3 opacity-80 hover:opacity-100 transition-opacity">
+                    <div className="w-8 h-8 rounded-lg bg-red-600/10 flex items-center justify-center text-red-500">
                       <Plane size={16} />
                     </div>
                     <div>
@@ -399,22 +430,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
               )
             )}
           </div>
-
-          <button 
-            onClick={() => onCreateTimeOff && onCreateTimeOff()}
-            className="w-full mt-8 py-4 bg-white/5 text-gray-300 hover:bg-white/10 rounded-2xl text-sm font-bold transition-all flex items-center justify-center space-x-2 border border-white/5"
-          >
-            <Plane size={20} />
-            <span>Poser un congé</span>
-          </button>
-
-          <button 
-            onClick={() => onCreateAppointment && onCreateAppointment()}
-            className="w-full mt-4 py-4 bg-lilas text-black hover:bg-lilas/90 rounded-2xl text-sm font-bold transition-all flex items-center justify-center space-x-2 shadow-lg shadow-lilas/10"
-          >
-            <Plus size={20} />
-            <span>Nouveau rendez-vous</span>
-          </button>
         </div>
       </div>
     </motion.div>

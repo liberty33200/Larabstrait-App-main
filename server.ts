@@ -50,7 +50,9 @@ if (!process.env.DB_PASSWORD || !process.env.DB_HOST) {
 }
 
 pool.connect(async (err, client, release) => {
-  if (err) return console.error("❌ Erreur de connexion Postgres:", err.stack);
+  if (err || !client) {
+    return console.error("❌ Erreur de connexion Postgres:", err?.stack || "Client introuvable");
+  }
   console.log("🐘 Connecté avec succès à PostgreSQL !");
   
   // Sécurité : On s'assure que toutes les colonnes nécessaires existent
@@ -58,7 +60,7 @@ pool.connect(async (err, client, release) => {
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS location TEXT`,
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS size TEXT`,
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS instagram TEXT`,
-    // ✅ NOUVEAU : Colonnes pour les liaisons Abby
+    // ✅ Colonnes pour les liaisons Abby
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_bdc_id TEXT`,
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_deposit_id TEXT`,
     `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_final_id TEXT`,
@@ -137,53 +139,6 @@ function getAbbyAxiosClient(): AxiosInstance | null {
   });
 }
 
-// ✅ CORRIGÉ : Recherche par email via le param `search`, création avec firstname/lastname séparés
-async function getOrCreateAbbyClient(abbyApi: AxiosInstance, rawName: string, rawEmail: string): Promise<string> {
-  const cleanEmail = (rawEmail || "").trim().toLowerCase();
-  const nameParts = (rawName || "Client Inconnu").trim().split(" ");
-  const firstname = nameParts[0] || "Client";
-  const lastname = nameParts.slice(1).join(" ") || "Inconnu";
-
-  // 1. Recherche par email via le paramètre `search`
-  if (cleanEmail) {
-    try {
-      console.log(`🔍 Recherche du contact Abby pour : ${cleanEmail}`);
-      const { data } = await abbyApi.get("/contacts", {
-        params: { page: 1, limit: 50, search: cleanEmail }
-      });
-      const contacts = data?.docs || [];
-      const found = contacts.find((c: any) =>
-        (c.emails || []).some((e: string) => e.toLowerCase().trim() === cleanEmail)
-      );
-      if (found) {
-        console.log(`✅ Contact existant trouvé : ${found.id}`);
-        return found.id;
-      }
-    } catch (e: any) {
-      console.error("❌ Erreur recherche contact Abby :", e.response?.data || e.message);
-      throw new Error("Serveur Abby inaccessible lors de la recherche.");
-    }
-  }
-
-  // 2. Création du contact si introuvable
-  console.log(`🆕 Création d'un nouveau contact Abby : ${firstname} ${lastname}`);
-  try {
-    const { data: newContact } = await abbyApi.post("/contact", {
-      firstname,
-      lastname,
-      emails: cleanEmail ? [cleanEmail] : []
-    });
-    const newId = newContact?.id;
-    if (!newId) throw new Error("Abby n'a pas renvoyé d'ID pour le nouveau contact.");
-    console.log(`✅ Nouveau contact créé : ${newId}`);
-    return newId;
-  } catch (error: any) {
-    console.error("❌ Échec création contact Abby :", error.response?.data || error.message);
-    throw new Error("Impossible de créer le contact dans Abby.");
-  }
-}
-
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -255,13 +210,62 @@ async function startServer() {
     } catch (error) { res.status(500).json({ error: "Erreur" }); }
   });
 
-  app.patch('/api/flashes/:id', express.json(), (req, res) => {
+  // =========================================================================
+  // --- GESTION DES FLASHS (Réservation & Exportation) ---
+  // =========================================================================
+  app.patch('/api/flashes/:id', express.json(), async (req, res) => {
     try {
-      const { available, reservationDetails } = req.body;
-      const clientData = reservationDetails ? JSON.stringify(reservationDetails) : null;
-      db.prepare("UPDATE flashes SET available = ?, client_data = ? WHERE id = ?").run(available ? 1 : 0, clientData, req.params.id);
+      const { available, reservationDetails, isExporting } = req.body;
+      const flashId = req.params.id;
+
+      // 1. Si on est en train d'exporter (Terminer et Exporter)
+      if (isExporting && reservationDetails) {
+        // On récupère les infos du Flash pour avoir le titre, prix, etc.
+        const flash: any = db.prepare("SELECT * FROM flashes WHERE id = ?").get(flashId);
+        
+        if (flash) {
+          const appointmentId = `flash-${Date.now()}`;
+          
+          // On insère le Flash comme un VRAI rendez-vous dans PostgreSQL
+          const query = `
+            INSERT INTO appointments (
+              id, client_name, client_phone, appointment_date, 
+              style, total_price, deposit_amount, deposit_status, 
+              project_status, project_recap, instagram, size
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `;
+
+          // On nettoie le prix du flash (ex: "150€" -> 150)
+          const cleanPrice = parseFloat(flash.price.replace(/[^0-9.]/g, '')) || 0;
+
+          const values = [
+            appointmentId, 
+            reservationDetails.name || "Client Flash", 
+            reservationDetails.phone || "",
+            reservationDetails.dateTime || new Date().toISOString(), 
+            "Flash", // Style
+            cleanPrice, // Prix total
+            0, // Pas d'acompte par défaut sur un Kiosk
+            "Non", // Statut acompte
+            "Validé", // Le flash est déjà dessiné et validé !
+            `Réservation Flash Kiosk: ${flash.title}`, // Récap
+            reservationDetails.instagram || "",
+            flash.size || "" // Taille du flash
+          ];
+
+          await pool.query(query, values);
+        }
+      }
+
+      // 2. Comportement normal de mise à jour du Flash (disponibilité)
+      const clientData = reservationDetails && !isExporting ? JSON.stringify(reservationDetails) : null;
+      db.prepare("UPDATE flashes SET available = ?, client_data = ? WHERE id = ?").run(available ? 1 : 0, clientData, flashId);
+      
       res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: "Erreur" }); }
+    } catch (error: any) { 
+      console.error("❌ Erreur Patch Flash:", error.message);
+      res.status(500).json({ error: "Erreur lors de la modification du flash" }); 
+    }
   });
 
   app.delete('/api/flashes/:id', (req, res) => {
@@ -634,122 +638,43 @@ async function startServer() {
   });
 
   // =========================================================================
-  // ✅ CORRIGÉ : CRÉATEUR DE DOCUMENT ABBY
-  // Flow correct : 1) Créer le doc vide  2) Ajouter les lignes
+  // --- ENCAISSEMENT VIA MAKE ---
   // =========================================================================
-  app.post("/api/abby/create-document", express.json(), async (req: any, res) => {
-    const { appointment, type } = req.body;
-
+  app.post("/api/appointments/:id/encaisser", express.json(), async (req: any, res) => {
     try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+      const { id } = req.params;
+      const { abbyFactureId, clientName, total } = req.body;
 
-      // Étape 0 : Récupérer ou créer le contact Abby
-      const customerId = await getOrCreateAbbyClient(
-        abbyApi,
-        appointment.client_name || "Client Inconnu",
-        appointment.client_email || ""
+      // 1. Appel du Webhook Make en direct
+      const MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/f6j61397e0mydxsxh45ovho05ruz9vtu";
+      
+      try {
+        await fetch(MAKE_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            appointmentId: id,
+            abbyDocumentId: abbyFactureId,
+            client: clientName,
+            amount: total,
+            action: "encaissement"
+          })
+        });
+        console.log(`✅ Webhook Make déclenché pour l'encaissement de ${clientName || 'Inconnu'}`);
+      } catch (makeError) {
+        console.error("⚠️ Make n'a pas répondu, mais on continue la mise à jour locale:", makeError);
+      }
+
+      // 2. Mise à jour de la base de données locale (Postgres)
+      await pool.query(
+        `UPDATE appointments SET project_status = 'Payé' WHERE id = $1`,
+        [id]
       );
 
-      // Calcul du montant selon le type
-      const totalAmount = Number(appointment.total_price) || 0;
-      let amount = totalAmount;
-      if (type === "Facture d'acompte") {
-        amount = totalAmount > 0 && totalAmount <= 200 ? 50 : Math.round(totalAmount * 0.25);
-      }
-
-      const dateLabel = appointment.appointment_date
-        ? new Date(appointment.appointment_date).toLocaleDateString('fr-FR')
-        : "date inconnue";
-
-      // ✅ Étape 1 : Créer le document vide avec le bon endpoint
-      let createEndpoint: string;
-      if (type === "Bon de commande") {
-        createEndpoint = `/v2/billing/estimate/${customerId}`;
-      } else {
-        // "Facture d'acompte" et "Facture finale" → invoice
-        createEndpoint = `/v2/billing/invoice/${customerId}`;
-      }
-
-      console.log(`📄 Création document Abby [${type}] sur ${createEndpoint}...`);
-      const { data: newDoc } = await abbyApi.post(createEndpoint);
-      const docId = newDoc?.id;
-      if (!docId) throw new Error("Abby n'a pas renvoyé d'ID de document après la création.");
-      console.log(`✅ Document créé : ${docId}`);
-
-      // ✅ Étape 2 : Ajouter les lignes avec le bon format
-      console.log(`📝 Ajout des lignes au document ${docId}...`);
-      await abbyApi.patch(`/v2/billing/${docId}/lines`, {
-        lines: [{
-          designation: `${type} - Tatouage du ${dateLabel}`,
-          unitPrice: Math.round(amount * 100), // ✅ en centimes
-          quantity: 1,
-          quantityUnit: 14,    // UNIT
-          type: 1,             // SERVICE
-          vatCode: "FR_00HT"   // ✅ 0% TVA (auto-entrepreneur)
-        }]
-      });
-      console.log(`✅ Lignes ajoutées au document ${docId}`);
-
-      // Étape 3 : Sauvegarder l'ID dans PostgreSQL et invalider le cache
-      abbyCache.data = null;
-
-      if (type === "Bon de commande") {
-        await pool.query(
-          `UPDATE appointments SET abby_bdc_id = $1 WHERE id = $2`,
-          [docId, appointment.id]
-        );
-      } else if (type === "Facture d'acompte") {
-        await pool.query(
-          `UPDATE appointments SET abby_deposit_id = $1, deposit_amount = $2 WHERE id = $3`,
-          [docId, amount, appointment.id]
-        );
-      } else {
-        // Facture finale
-        await pool.query(
-          `UPDATE appointments SET abby_final_id = $1 WHERE id = $2`,
-          [docId, appointment.id]
-        );
-      }
-
-      res.json({ success: true, data: { id: docId, amount } });
-
-    } catch (error: any) {
-      const detail = error.response?.data?.message || error.response?.data || error.message;
-      console.error("❌ Erreur create-document Abby:", detail);
-      res.status(500).json({ error: "Erreur lors de la création sur Abby", detail });
-    }
-  });
-
-  // =========================================================================
-  // --- ENCAISSEUR ABBY ---
-  // =========================================================================
-  app.post("/api/abby/pay-document", express.json(), async (req: any, res) => {
-    const { abbyDocId, type, appointmentId } = req.body;
-
-    try {
-      const abbyApi = getAbbyAxiosClient();
-      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
-
-      await abbyApi.post(`/v2/billings/${abbyDocId}/payments`, {
-        amount: 0,
-        paymentMethod: "cash",
-        paidAt: new Date().toISOString()
-      });
-
-      if (type === "Facture d'acompte") {
-        await pool.query(
-          `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
-          [appointmentId]
-        );
-      }
-
-      abbyCache.data = null;
       res.json({ success: true });
-
     } catch (error: any) {
-      console.error("❌ Erreur Direct Abby Pay:", error.response?.data || error.message);
-      res.status(500).json({ error: "Erreur lors de l'encaissement sur Abby" });
+      console.error("❌ Erreur lors de l'encaissement:", error.message);
+      res.status(500).json({ error: "Erreur serveur" });
     }
   });
 
@@ -829,7 +754,7 @@ async function startServer() {
       res.status(200).set({ "Content-Type": "text/html" }).send(await vite.transformIndexHtml(req.url, fs.readFileSync(indexPath, "utf-8")));
     } catch (e) { res.status(500).send("Erreur interne."); }
   });
-
+  
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`>>> SERVEUR DÉMARRÉ SUR LE PORT ${PORT} <<<`);
   });

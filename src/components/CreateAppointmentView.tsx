@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ArrowLeft, Plus, RefreshCw, AlertCircle } from 'lucide-react';
 
-export const CreateAppointmentView = ({ clients, onBack, onCreated, apiFetch }: any) => {
+export const CreateAppointmentView = ({ clients, initialDate, onBack, onCreated, apiFetch }: any) => {
   const [isNewClient, setIsNewClient] = useState(false);
   const [formData, setFormData] = useState({
     clientId: '',
     newClientName: '',
     newClientEmail: '',
-    date: new Date().toISOString().split('T')[0],
+    // ✅ Utilisation de la date initiale si fournie, sinon date du jour
+    date: initialDate || new Date().toISOString().split('T')[0],
     time: '14:00',
     style: 'Flash',
     total: 0,
