@@ -146,7 +146,7 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
 
   const handleEncaissementMake = async (docType: string, docId: string) => {
     const amount = docType === "Facture d'acompte" ? appointment.depositAmount : appointment.total;
-    if (!confirm(`Souhaites-tu encaisser la ${docType.toLowerCase()} via Make ?\n(Montant estimé: ${amount}€)`)) return;
+    if (!confirm(`Souhaites-tu encaisser la ${docType.toLowerCase()} via Make ?\n(Montant: ${amount}€)\n\nL'opération peut prendre jusqu'à 20 secondes.`)) return;
     
     setEncashingType(docType);
     try {
@@ -161,15 +161,19 @@ export const AppointmentDetailView = ({ appointment, onBack, onUpdate, apiFetch 
         })
       });
       
-      if (res.ok) {
-        alert("✅ Demande d'encaissement envoyée à Make avec succès !");
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        alert(`✅ ${docType} encaissée avec succès et confirmée par Abby !`);
         onUpdate();
       } else {
-        throw new Error("Erreur serveur");
+        throw new Error(data.error || "Erreur serveur");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("❌ Une erreur est survenue lors de l'envoi à Make.");
+      alert(`❌ ${error.message}`);
+      // On force quand même la mise à jour de l'UI au cas où
+      onUpdate(); 
     } finally {
       setEncashingType(null);
     }

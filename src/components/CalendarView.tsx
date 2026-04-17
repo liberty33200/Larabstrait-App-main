@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Clock, Plane, Plus, ChevronRight, MoreVertical } from 'lucide-react';
+import { Calendar, Clock, Plane, Plus, ChevronRight, MoreVertical, Trash2 } from 'lucide-react';
 
-export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, onCreateAppointment, onCreateTimeOff }: any) => {
+export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppointment, onCreateAppointment, onCreateTimeOff, onDeleteTimeOff }: any) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month');
@@ -14,7 +14,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
 
   const weekDays = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-  // ✅ Palette de couleurs plus contrastée
   const legend = [
     { label: 'Projet perso', color: 'bg-indigo-500' },
     { label: 'Flash', color: 'bg-cyan-500' },
@@ -118,7 +117,7 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
   ];
 
   const formatTimeOffTime = (off: any) => {
-    if (off.time && off.time !== '00:00') return off.time; // Heure valide trouvée
+    if (off.time && off.time !== '00:00') return off.time; 
 
     const start = new Date(off.start);
     const end = new Date(off.end);
@@ -135,7 +134,6 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
 
   const handleCreateAppointmentForSelectedDate = () => {
     if (onCreateAppointment) {
-      // ✅ On envoie la date sélectionnée (ex: '2026-04-15')
       const dateString = new Date(selectedDate.getTime() - (selectedDate.getTimezoneOffset() * 60000))
         .toISOString()
         .split('T')[0];
@@ -362,22 +360,33 @@ export const CalendarView = ({ appointments, timeOffEvents = [], onSelectAppoint
             </button>
           </div>
 
-          {/* LISTE DES RENDEZ-VOUS */}
           <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[300px]">
             {selectedDayTimeOff.length > 0 && (
               <div className="mb-4 space-y-2">
                 <p className="text-[10px] font-bold text-red-400/70 uppercase tracking-widest px-1">Indisponibilités</p>
                 {selectedDayTimeOff.map((off: any, idx: number) => (
-                  <div key={off.id || `off-${idx}`} className="p-3 bg-red-600/5 border border-dashed border-red-600/20 rounded-xl flex items-center space-x-3 opacity-80 hover:opacity-100 transition-opacity">
-                    <div className="w-8 h-8 rounded-lg bg-red-600/10 flex items-center justify-center text-red-500">
-                      <Plane size={16} />
+                  <div key={off.id || `off-${idx}`} className="group p-3 bg-red-600/5 border border-dashed border-red-600/20 rounded-xl flex items-center justify-between opacity-80 hover:opacity-100 transition-opacity">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-lg bg-red-600/10 flex items-center justify-center text-red-500">
+                        <Plane size={16} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-red-400/90">{off.title || off.client || 'Congé'}</p>
+                        <p className="text-[10px] text-red-400/60 font-medium">
+                          {formatTimeOffTime(off)}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-red-400/90">{off.title || off.client || 'Congé'}</p>
-                      <p className="text-[10px] text-red-400/60 font-medium">
-                        {formatTimeOffTime(off)}
-                      </p>
-                    </div>
+                    {/* ✅ BOUTON POUBELLE POUR SUPPRIMER LE CONGÉ */}
+                    {off.id && onDeleteTimeOff && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); onDeleteTimeOff(off.id); }}
+                        className="p-2 text-red-400/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                        title="Supprimer ce congé"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

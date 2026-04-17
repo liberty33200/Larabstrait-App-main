@@ -638,12 +638,12 @@ async function startServer() {
   });
 
   // =========================================================================
-  // --- ENCAISSEMENT VIA MAKE ---
+  // --- ENCAISSEMENT VIA MAKE (Avec vérification Abby) ---
   // =========================================================================
   app.post("/api/appointments/:id/encaisser", express.json(), async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { abbyFactureId, clientName, total } = req.body;
+      const { abbyFactureId, clientName, total, docType } = req.body;
 
       // 1. Appel du Webhook Make en direct
       const MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/f6j61397e0mydxsxh45ovho05ruz9vtu";
@@ -657,19 +657,67 @@ async function startServer() {
             abbyDocumentId: abbyFactureId,
             client: clientName,
             amount: total,
-            action: "encaissement"
+            action: "encaissement",
+            docType: docType
           })
         });
-        console.log(`✅ Webhook Make déclenché pour l'encaissement de ${clientName || 'Inconnu'}`);
+        console.log(`🚀 Webhook Make déclenché pour l'encaissement de ${clientName || 'Inconnu'}`);
       } catch (makeError) {
-        console.error("⚠️ Make n'a pas répondu, mais on continue la mise à jour locale:", makeError);
+        console.error("⚠️ Make n'a pas pu être contacté:", makeError);
+        return res.status(500).json({ error: "Impossible de contacter Make pour lancer l'encaissement." });
       }
 
-      // 2. Mise à jour de la base de données locale (Postgres)
-      await pool.query(
-        `UPDATE appointments SET project_status = 'Payé' WHERE id = $1`,
-        [id]
-      );
+      // 2. Vérification auprès d'Abby (Polling)
+      const abbyApi = getAbbyAxiosClient();
+      if (!abbyApi) return res.status(400).json({ error: "Clé API Abby non configurée" });
+
+      let isPaid = false;
+      let attempts = 0;
+      const maxAttempts = 10; // 10 tentatives x 2 secondes = 20 secondes max d'attente
+
+      console.log(`⏳ Attente de la confirmation d'Abby pour le document ${abbyFactureId}...`);
+
+      while (attempts < maxAttempts) {
+        // On attend 2 secondes avant de vérifier
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        attempts++;
+
+        try {
+          const { data } = await abbyApi.get(`/v2/billing/${abbyFactureId}`);
+          const docInfo = data.data || data;
+          const docStatus = (docInfo.status || docInfo.state || "").toString().toLowerCase();
+
+          // Si le statut est passé à payé/encaissé, on sort de la boucle !
+          if (["paid", "payée", "payee", "accepted", "acceptée", "signed", "signé", "encaissé"].includes(docStatus)) {
+            isPaid = true;
+            console.log(`✅ Paiement confirmé par Abby au bout de ${attempts * 2} secondes !`);
+            break;
+          }
+        } catch (err: any) {
+          console.error(`⚠️ Tentative ${attempts} : Impossible de lire le statut sur Abby`);
+        }
+      }
+
+      // Si au bout de 20 secondes Abby n'a pas confirmé le paiement
+      if (!isPaid) {
+        return res.status(408).json({ error: "Make a été lancé, mais Abby n'a pas confirmé le paiement à temps. Vérifie sur ton compte Abby." });
+      }
+
+      // 3. Mise à jour de la base de données locale UNIQUEMENT SI c'est validé
+      if (docType === "Facture d'acompte") {
+        await pool.query(
+          `UPDATE appointments SET deposit_status = 'Oui' WHERE id = $1`,
+          [id]
+        );
+      } else {
+        await pool.query(
+          `UPDATE appointments SET project_status = 'Payé' WHERE id = $1`,
+          [id]
+        );
+      }
+
+      // On vide le cache des documents Abby pour que l'interface se mette à jour
+      abbyCache.data = null;
 
       res.json({ success: true });
     } catch (error: any) {

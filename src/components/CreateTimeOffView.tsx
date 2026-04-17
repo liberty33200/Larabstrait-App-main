@@ -5,7 +5,6 @@ import { ArrowLeft, Save, RefreshCw, AlertCircle, Plane, Calendar as CalendarIco
 export const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reason, setReason] = useState('');
 
   // États pour le calendrier de plage de dates
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -76,8 +75,8 @@ export const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
   };
 
   const handleSubmit = async () => {
-    if (!startDate || !reason) {
-      setError("Veuillez remplir le motif et sélectionner au moins une date.");
+    if (!startDate) {
+      setError("Veuillez sélectionner au moins une date.");
       return;
     }
 
@@ -97,9 +96,9 @@ export const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
         const safeDate = new Date(date);
         safeDate.setHours(12, 0, 0, 0); // Midi pour éviter les bugs de fuseau horaire
 
-        // 🎯 PAYLOAD PROPRE POSTGRESQL
+        // 🎯 PAYLOAD PROPRE POSTGRESQL (Sans motif)
         const payload = {
-          client_name: `CONGÉ: ${reason}`,
+          client_name: `Congé`,
           client_email: 'conge@larabstrait.fr',
           appointment_date: safeDate.toISOString(),
           total_price: 0,
@@ -212,7 +211,7 @@ export const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
           )}
         </div>
 
-        {/* COLONNE DROITE : LE MOTIF ET LE RÉCAP */}
+        {/* COLONNE DROITE : RÉCAPITULATIF ÉPURÉ */}
         <div className="space-y-6">
           <div className="glass-card p-8">
             <h3 className="font-bold text-lg flex items-center space-x-2 mb-6 text-red-400">
@@ -220,19 +219,8 @@ export const CreateTimeOffView = ({ onBack, onCreated, apiFetch }: any) => {
               <span>Période d'absence</span>
             </h3>
             
-            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-8">
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
               <p className="text-center font-medium text-red-300">{formatDateDisplay()}</p>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest">Motif de l'absence</label>
-              <input 
-                type="text" 
-                placeholder="Ex: Vacances, Maladie, Repos..." 
-                value={reason} 
-                onChange={(e) => setReason(e.target.value)} 
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-lg font-medium focus:outline-none focus:border-red-500/50 transition-all text-white placeholder:text-white/20"
-              />
             </div>
           </div>
 

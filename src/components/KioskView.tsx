@@ -16,7 +16,7 @@ export const KioskView = ({ onClose, apiFetch }: { onClose: () => void, apiFetch
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', insta: '' });
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const IDLE_TIME = 60000;
-  const EVENT_DATES = ['2026-04-14']; 
+  const EVENT_DATES = ['2026-05-23' , '2026-05-24']; 
 
   const loadFlashes = async () => {
     try {

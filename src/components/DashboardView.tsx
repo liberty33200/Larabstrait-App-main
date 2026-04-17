@@ -50,7 +50,7 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     .filter((appt: any) => (appt.rawDate || 0) > 0 && (appt.rawDate || 0) < today)
     .sort((a: any, b: any) => (b.rawDate || 0) - (a.rawDate || 0));
   
-  // 🗂️ 1. DESSINS À PRÉPARER (Corrigé !)
+  // 🗂️ 1. DESSINS À PRÉPARER
   const drawingsToDo = upcomingAppointments.filter((appt: any) => 
     appt.projectStatus !== 'Validé' && appt.projectStatus !== 'Non nécessaire'
   );
@@ -161,11 +161,11 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
               const status = getStatusBadge(appt);
               return (
                 <motion.div key={`verify-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-orange-500/50 bg-orange-500/5">
-                  <div className="flex items-center space-x-5">
-                    <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 font-bold text-lg border border-orange-500/20 shrink-0">{appt.client.charAt(0)}</div>
+                  <div className="flex items-center space-x-4 md:space-x-5 min-w-0">
+                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 font-bold text-lg border border-orange-500/20 shrink-0">{appt.client.charAt(0)}</div>
                     <div className="min-w-0">
-                      <h4 className="font-semibold text-lg group-hover:text-orange-500 transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
+                      <h4 className="font-semibold text-base md:text-lg group-hover:text-orange-500 transition-colors truncate">{appt.client}</h4>
+                      <div className="flex items-center space-x-3 text-xs md:text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-orange-500 leading-tight">{appt.price}</p></div>
@@ -188,11 +188,11 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
               const status = getStatusBadge(appt);
               return (
                 <motion.div key={`admin-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-amber-500/30">
-                  <div className="flex items-center space-x-5">
-                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-amber-500 font-bold text-lg border border-white/10 shrink-0">{appt.client.charAt(0)}</div>
+                  <div className="flex items-center space-x-4 md:space-x-5 min-w-0">
+                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-amber-500 font-bold text-lg border border-white/10 shrink-0">{appt.client.charAt(0)}</div>
                     <div className="min-w-0">
-                      <h4 className="font-semibold text-lg group-hover:text-amber-500 transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
+                      <h4 className="font-semibold text-base md:text-lg group-hover:text-amber-500 transition-colors truncate">{appt.client}</h4>
+                      <div className="flex items-center space-x-3 text-xs md:text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-amber-500 leading-tight">{appt.price}</p></div>
@@ -213,14 +213,22 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
           <div className="space-y-4">
             {drawingsToDo.map((appt: any, i: number) => (
               <motion.div key={`draw-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-blue-500/30">
-                <div className="flex items-center space-x-5">
-                  <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-bold text-lg border border-blue-500/20 shrink-0"><PenTool size={20} /></div>
+                
+                {/* COLONNE 1 : Avatar, Nom, Date */}
+                <div className="flex items-center space-x-4 md:space-x-5 min-w-0">
+                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-bold text-lg border border-blue-500/20 shrink-0"><PenTool size={20} /></div>
                   <div className="min-w-0">
-                    <h4 className="font-semibold text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
+                    <h4 className="font-semibold text-base md:text-lg group-hover:text-blue-500 transition-colors truncate">{appt.client}</h4>
+                    <div className="flex items-center space-x-3 text-xs md:text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span><span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span></div>
                   </div>
                 </div>
-                <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-xs text-gray-500 truncate w-full mt-1">{appt.projectRecap || 'Aucun détail'}</p></div>
+
+                {/* COLONNE 2 : Style & Récapitulatif (✅ CORRIGÉ ICI) */}
+                <div className="flex flex-col items-end text-right min-w-0 max-w-[130px] sm:max-w-[180px] md:max-w-none">
+                  <p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p>
+                  <p className="text-xs text-gray-500 truncate w-full mt-1" title={appt.projectRecap}>{appt.projectRecap || 'Aucun détail'}</p>
+                </div>
+
                 <div className="hidden md:flex justify-center">
                   <div className={`px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${
                     appt.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
@@ -246,11 +254,11 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
           <div className="space-y-4">
             {toEncash.map((appt: any, i: number) => (
               <motion.div key={`unpaid-${appt.id}`} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} onClick={() => onSelectAppointment(appt)} className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_120px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group border-l-2 border-rose-500/30">
-                <div className="flex items-center space-x-5">
-                  <div className="w-12 h-12 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 font-bold text-lg border border-rose-500/20 shrink-0"><Receipt size={20} /></div>
+                <div className="flex items-center space-x-4 md:space-x-5 min-w-0">
+                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 font-bold text-lg border border-rose-500/20 shrink-0"><Receipt size={20} /></div>
                   <div className="min-w-0">
-                    <h4 className="font-semibold text-lg group-hover:text-rose-500 transition-colors truncate">{appt.client}</h4>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
+                    <h4 className="font-semibold text-base md:text-lg group-hover:text-rose-500 transition-colors truncate">{appt.client}</h4>
+                    <div className="flex items-center space-x-3 text-xs md:text-sm text-gray-400"><span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span></div>
                   </div>
                 </div>
                 <div className="flex flex-col items-end text-right"><p className="text-xs md:text-sm font-medium text-gray-400 leading-tight truncate w-full">{appt.style}</p><p className="text-sm md:text-lg font-bold text-rose-500 leading-tight">{appt.price}</p></div>
@@ -292,13 +300,13 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
                   onClick={() => onSelectAppointment(appt)} 
                   className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_200px_40px] items-center gap-4 hover:bg-white/[0.02] transition-colors cursor-pointer group"
                 >
-                  <div className="flex items-center space-x-5">
-                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-lilas font-bold text-lg border border-white/10 shrink-0">
+                  <div className="flex items-center space-x-4 md:space-x-5 min-w-0">
+                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 flex items-center justify-center text-lilas font-bold text-lg border border-white/10 shrink-0">
                       {appt.client.charAt(0)}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="font-semibold text-lg group-hover:text-lilas transition-colors truncate">{appt.client}</h4>
-                      <div className="flex items-center space-x-3 text-sm text-gray-400">
+                      <h4 className="font-semibold text-base md:text-lg group-hover:text-lilas transition-colors truncate">{appt.client}</h4>
+                      <div className="flex items-center space-x-3 text-xs md:text-sm text-gray-400">
                         <span className="flex items-center space-x-1 shrink-0"><Calendar size={14} /><span>{appt.date}</span></span>
                         <span className="flex items-center space-x-1 shrink-0"><Clock size={14} /><span>{appt.time}</span></span>
                       </div>

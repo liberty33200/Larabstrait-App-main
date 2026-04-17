@@ -260,6 +260,21 @@ export default function App() {
     return ((client.displayName && client.displayName.toLowerCase().includes(query)) || (client.firstName && client.firstName.toLowerCase().includes(query)) || (client.lastName && client.lastName.toLowerCase().includes(query)) || (client.email && client.email.toLowerCase().includes(query)));
   });
 
+  // ✅ Fonction pour supprimer un congé directement depuis le calendrier
+  const handleDeleteTimeOff = async (id: string) => {
+    if (!window.confirm("Es-tu sûr de vouloir supprimer cette indisponibilité ?")) return;
+    try {
+      const res = await apiFetch(`/api/appointments/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchData(); // Rafraîchit les données après la suppression
+      } else {
+        alert("Erreur lors de la suppression.");
+      }
+    } catch (e) {
+      alert("Erreur réseau lors de la suppression.");
+    }
+  };
+
   const navigateTo = (tab: string) => {
     setActiveTab(tab);
     setShowCreateForm(false);
