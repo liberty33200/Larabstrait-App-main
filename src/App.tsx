@@ -353,6 +353,7 @@ export default function App() {
                 setShowCreateForm(true); 
               }} 
               onCreateTimeOff={() => setShowTimeOffForm(true)} 
+              onDeleteTimeOff={handleDeleteTimeOff}
             />
           ) : activeTab === 'accounting' ? (
             <AccountingView key="accounting" appointments={filteredAppointments} rules={accountingRules} loading={loading} />
