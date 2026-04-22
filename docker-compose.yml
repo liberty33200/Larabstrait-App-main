@@ -50,4 +50,4 @@ services:
       - "5173:5173" # On mappe le 3051 du NAS vers le 5173 du container
     environment:
       - NODE_ENV=production
-      - APP_URL=https://booking.larabstrait.fr
+      - APP_URL=https://formulaire.larabstrait.fr
