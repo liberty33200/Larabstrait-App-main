@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, ChevronLeft, Send, CheckCircle, AlertCircle, X, Upload } from 'lucide-react';
 
-const API_URL = "http://localhost:3000/api/requests"; 
+const API_URL = "https://app.larabstrait.fr/api/requests"; 
 
 export const BookingForm = () => {
   const [step, setStep] = useState(1);

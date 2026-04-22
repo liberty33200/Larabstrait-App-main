@@ -44,6 +44,8 @@ services:
     build:
       context: ./book-larabstrait
       dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=https://app.larabstrait.fr
     container_name: larabstrait-booking
     restart: unless-stopped
     ports:
