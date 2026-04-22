@@ -9,7 +9,7 @@ services:
     container_name: larabstrait-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3050:3000"
     environment:
       - NODE_ENV=production
       - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
