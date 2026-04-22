@@ -1,20 +1,21 @@
 version: '3.8'
 
 services:
+  # --- DASHBOARD (App principale) ---
   larabstrait:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: larabstrait-app
     restart: unless-stopped
     ports:
       - "3050:3000"
     environment:
       - NODE_ENV=production
-      # On fait le pont pour Microsoft
       - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
       - MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
       - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
       - EMAIL_STUDIO=${EMAIL_STUDIO}
-      # On fait le pont pour l'URL de l'app et les notifications
       - REDIRECT_URI=${REDIRECT_URI}
       - REDIRECT_URL=${REDIRECT_URL}
       - APP_URL=${APP_URL}
@@ -34,6 +35,19 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
     volumes:
-      # On lie le dossier interne /app/data au dossier visible du NAS
+      # Chemins absolus obligatoires pour Synology
       - /volume1/docker/larabstrait-app/data:/app/data
       - /volume1/docker/larabstrait-app/uploads:/app/data/uploads
+
+  # --- FORMULAIRE (Booking) ---
+  larabstrait-booking:
+    build:
+      context: ./book-larabstrait
+      dockerfile: Dockerfile
+    container_name: larabstrait-booking
+    restart: unless-stopped
+    ports:
+      - "3051:5173" # On mappe le 3051 du NAS vers le 5173 du container
+    environment:
+      - NODE_ENV=production
+      - APP_URL=https://booking.larabstrait.fr
