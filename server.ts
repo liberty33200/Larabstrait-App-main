@@ -16,6 +16,8 @@ import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
 import cors from "cors";
 
+
+
 // 1. On définit la structure d'une demande pour TypeScript
 interface MockRequest {
   id: number;
@@ -226,6 +228,14 @@ function getAbbyAxiosClient(): AxiosInstance | null {
 async function startServer() {
   const app = express();
   const PORT = 3000;
+app.use(cors({
+  origin: [
+    'https://formulaire.larabstrait.fr', 
+    'https://app.larabstrait.fr'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
 
   // ==========================================
   // 1. CONFIGURATION GLOBALE ET SÉCURITÉ
