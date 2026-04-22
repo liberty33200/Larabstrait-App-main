@@ -21,6 +21,7 @@ import { CreateTimeOffView } from './components/CreateTimeOffView';
 import { BugReportView } from './components/BugReportView';
 import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
+import { InboxView } from './components/InboxView'; // Assure-toi que le fichier s'appelle InboxView.tsx dans components
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -38,8 +39,8 @@ export default function App() {
   const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
   
   const [showCreateForm, setShowCreateForm] = useState(false);
-  // ✅ NOUVEAU : Stocke la date pré-sélectionnée depuis le calendrier
   const [initialDateForForm, setInitialDateForForm] = useState<string | null>(null); 
+  const [initialRequestData, setInitialRequestData] = useState<any>(null); 
   
   const [showTimeOffForm, setShowTimeOffForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -260,13 +261,12 @@ export default function App() {
     return ((client.displayName && client.displayName.toLowerCase().includes(query)) || (client.firstName && client.firstName.toLowerCase().includes(query)) || (client.lastName && client.lastName.toLowerCase().includes(query)) || (client.email && client.email.toLowerCase().includes(query)));
   });
 
-  // ✅ Fonction pour supprimer un congé directement depuis le calendrier
   const handleDeleteTimeOff = async (id: string) => {
     if (!window.confirm("Es-tu sûr de vouloir supprimer cette indisponibilité ?")) return;
     try {
       const res = await apiFetch(`/api/appointments/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        fetchData(); // Rafraîchit les données après la suppression
+        fetchData(); 
       } else {
         alert("Erreur lors de la suppression.");
       }
@@ -278,7 +278,8 @@ export default function App() {
   const navigateTo = (tab: string) => {
     setActiveTab(tab);
     setShowCreateForm(false);
-    setInitialDateForForm(null); // On reset la date au changement d'onglet
+    setInitialDateForForm(null); 
+    setInitialRequestData(null); 
     setShowTimeOffForm(false);
     setSelectedAppointment(null);
     setIsMobileMenuOpen(false);
@@ -316,8 +317,7 @@ export default function App() {
           <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-              <input type="text" placeholder="Rechercher un client, un email ou un style..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-card-bg border border-white/10 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:border-lilas/50 transition-all w-full" />
-              {searchQuery && <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"><X size={16} /></button>}
+              <input type="text" placeholder="Rechercher..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-card-bg border border-white/10 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:border-lilas/50 transition-all w-full" />
             </div>
             {activeTab === 'dashboard' && !showCreateForm && !selectedAppointment && (
               <button onClick={() => setShowCreateForm(true)} className="btn-primary flex items-center justify-center space-x-2 md:w-auto w-full"><Plus size={20} /><span>Nouveau RDV</span></button>
@@ -332,15 +332,25 @@ export default function App() {
             <CreateAppointmentView 
               key="create" 
               clients={filteredClients} 
-              initialDate={initialDateForForm} // ✅ On passe la date ici
-              onBack={() => { setShowCreateForm(false); setInitialDateForForm(null); }} 
-              onCreated={() => { setShowCreateForm(false); setInitialDateForForm(null); fetchData(); }} 
+              initialDate={initialDateForForm}
+              initialRequestData={initialRequestData}
+              onBack={() => { setShowCreateForm(false); setInitialDateForForm(null); setInitialRequestData(null); }} 
+              onCreated={() => { setShowCreateForm(false); setInitialDateForForm(null); setInitialRequestData(null); fetchData(); }} 
               apiFetch={apiFetch} 
             />
           ) : showTimeOffForm ? (
             <CreateTimeOffView key="timeoff" onBack={() => setShowTimeOffForm(false)} onCreated={() => { setShowTimeOffForm(false); fetchData(); }} apiFetch={apiFetch} />
           ) : selectedAppointment ? (
             <AppointmentDetailView key="detail" appointment={selectedAppointment} onBack={() => setSelectedAppointment(null)} onUpdate={() => { setSelectedAppointment(null); fetchData(); }} apiFetch={apiFetch} />
+          ) : activeTab === 'requests' ? (
+            <InboxView 
+              key="requests" 
+              apiFetch={apiFetch}
+              onAcceptRequest={(req: any) => {
+                setInitialRequestData(req); 
+                setShowCreateForm(true);    
+              }}
+            />
           ) : activeTab === 'calendar' ? (
             <CalendarView 
               key="calendar" 
@@ -348,7 +358,6 @@ export default function App() {
               timeOffEvents={timeOffEvents} 
               onSelectAppointment={setSelectedAppointment} 
               onCreateAppointment={(dateString: string) => { 
-                // ✅ Quand on clique dans CalendarView, on stocke la date et on ouvre le formulaire
                 if (dateString) setInitialDateForForm(dateString);
                 setShowCreateForm(true); 
               }} 

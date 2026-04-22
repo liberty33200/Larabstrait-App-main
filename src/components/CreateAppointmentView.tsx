@@ -1,14 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { ArrowLeft, Plus, RefreshCw, AlertCircle } from 'lucide-react';
 
-export const CreateAppointmentView = ({ clients, initialDate, onBack, onCreated, apiFetch }: any) => {
+export const CreateAppointmentView = ({ clients, initialDate, initialRequestData, onBack, onCreated, apiFetch }: any) => {
   const [isNewClient, setIsNewClient] = useState(false);
   const [formData, setFormData] = useState({
     clientId: '',
     newClientName: '',
     newClientEmail: '',
-    // ✅ Utilisation de la date initiale si fournie, sinon date du jour
     date: initialDate || new Date().toISOString().split('T')[0],
     time: '14:00',
     style: 'Flash',
@@ -22,6 +21,26 @@ export const CreateAppointmentView = ({ clients, initialDate, onBack, onCreated,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ NOUVEAU : Pré-remplissage automatique depuis la boîte de réception
+  useEffect(() => {
+    if (initialRequestData) {
+      setIsNewClient(true);
+      
+      // On compile les infos supplémentaires dans le récapitulatif
+      const extraInfo = `\n\n--- Contact Client ---\nTéléphone : ${initialRequestData.client_phone || 'Non renseigné'}\nInstagram : ${initialRequestData.instagram || 'Non renseigné'}\nDisponibilités : ${initialRequestData.availability_prefs || 'Non renseigné'}`;
+      
+      setFormData(prev => ({
+        ...prev,
+        newClientName: initialRequestData.client_name || '',
+        newClientEmail: initialRequestData.client_email || '',
+        style: 'Projet perso',
+        location: initialRequestData.placement || '',
+        size: initialRequestData.estimated_size || '',
+        projectRecap: (initialRequestData.project_description || '') + extraInfo
+      }));
+    }
+  }, [initialRequestData]);
 
   const calculateDefaultDeposit = (total: number) => {
     const t = parseFloat(total.toString());
@@ -68,7 +87,7 @@ export const CreateAppointmentView = ({ clients, initialDate, onBack, onCreated,
       const dateTime = new Date(`${formData.date}T${formData.time}`);
       const needsDrawing = ["Flash", "Projet perso", "Cadeau"].includes(formData.style);
 
-      // 🎯 PAYLOAD PROPRE POSTGRESQL (Strictement les bons noms de colonnes)
+      // 🎯 PAYLOAD PROPRE POSTGRESQL
       const createPayload: any = {
         client_name: clientName,
         client_email: clientEmail,
@@ -252,7 +271,7 @@ export const CreateAppointmentView = ({ clients, initialDate, onBack, onCreated,
               <textarea 
                 value={formData.projectRecap}
                 onChange={(e) => setFormData({...formData, projectRecap: e.target.value})}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all min-h-[80px]"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-lilas/50 transition-all min-h-[140px] resize-y"
                 placeholder="Détails du projet..."
               />
             </div>

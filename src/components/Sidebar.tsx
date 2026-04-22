@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LayoutDashboard, Calendar, Wallet, FileText, Users, Settings, 
-  Sparkles, ChevronDown, LayoutGrid, Image as ImageIcon, ListOrdered, 
-  AlertTriangle, RefreshCw, LogOut, X 
+  Sparkles, ChevronDown, LayoutGrid, ImageIcon, ListOrdered, 
+  AlertTriangle, RefreshCw, LogOut, X, 
+  Inbox // ✅ Ajout de l'icône Inbox
 } from 'lucide-react';
 
 const SidebarItem = ({ icon: Icon, label, active = false, onClick }: any) => (
@@ -28,7 +29,6 @@ export const Sidebar = ({
     setIsSyncing(true);
     setIsMobileMenuOpen(false);
     
-    // 1. Demande au serveur de vérifier les paiements sur Abby et de MAJ le NAS
     if (apiFetch) {
       try {
         await apiFetch('/api/abby/sync', { method: 'POST' });
@@ -37,7 +37,6 @@ export const Sidebar = ({
       }
     }
 
-    // 2. Recharge les rendez-vous avec les données fraîches
     if (fetchData) {
       await fetchData();
     }
@@ -56,7 +55,20 @@ export const Sidebar = ({
       </div>
 
       <nav className="flex-1 space-y-2 overflow-y-auto custom-scrollbar">
+        {/* --- SECTION PRINCIPALE --- */}
         <SidebarItem icon={LayoutDashboard} label="Tableau de bord" active={activeTab === 'dashboard'} onClick={() => navigateTo('dashboard')} />
+        
+        {/* ✅ NOUVEAU : BOÎTE DE RÉCEPTION */}
+        <SidebarItem 
+          icon={Inbox} 
+          label="Demandes" 
+          active={activeTab === 'requests'} 
+          onClick={() => {
+            navigateTo('requests');
+            setIsMobileMenuOpen(false); // Ferme le menu sur mobile après clic
+          }} 
+        />
+
         <SidebarItem icon={Calendar} label="Agenda" active={activeTab === 'calendar'} onClick={() => navigateTo('calendar')} />
         <SidebarItem icon={Wallet} label="Comptabilité" active={activeTab === 'accounting'} onClick={() => navigateTo('accounting')} />
         <SidebarItem icon={FileText} label="Facturation" active={activeTab === 'billing'} onClick={() => navigateTo('billing')} />

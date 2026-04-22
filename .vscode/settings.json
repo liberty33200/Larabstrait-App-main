@@ -1,6 +1,7 @@
 {
     "sqltools.connections": [
         {
+            "css.lint.unknownAtRules": "ignore",
             "ssh": "Disabled",
             "previewLimit": 50,
             "server": "localhost",
