@@ -145,15 +145,16 @@ export const LoginView = ({ onLoginSuccess, apiFetch, isAuthenticated }: { onLog
         animate={{ opacity: 1, scale: 1 }}
         className="max-w-md w-full glass-card p-10 text-center space-y-8"
       >
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-20 h-20 bg-lilas rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(209,179,255,0.3)]">
-            <span className="text-black font-bold text-4xl">LA</span>
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Larabstrait</h1>
-            <p className="text-gray-400 mt-2">Studio de Tatouage Privé</p>
-          </div>
-        </div>
+        
+<div className="flex flex-col items-center justify-center mb-12">
+  <img 
+    src="/logo_larabstrait.png" 
+    alt="Larabstrait Logo" 
+    className="h-24 w-auto mb-6 object-contain"
+  />
+  <h1 className="text-4xl font-black text-white tracking-tighter">Larabstrait</h1>
+  <p className="text-gray-500 mt-2">Studio de Tatouage Privé</p>
+</div>
 
         {!isCheckingCookies && browserCanWriteCookie === false && isIframe && (
           <div className="p-6 bg-orange-500/20 border-2 border-orange-500 rounded-2xl text-orange-200 text-sm space-y-4 shadow-[0_0_20px_rgba(249,115,22,0.2)]">

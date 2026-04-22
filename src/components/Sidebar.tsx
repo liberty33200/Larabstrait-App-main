@@ -46,13 +46,15 @@ export const Sidebar = ({
 
   return (
     <aside className={`fixed inset-0 z-[60] md:relative md:inset-auto w-full md:w-64 border-r border-white/5 p-6 pt-6 flex flex-col bg-dark-bg transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-      <div className="flex items-center justify-between mb-10 md:mb-10 px-2">
-        <div className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => navigateTo('dashboard')}>
-          <div className="w-10 h-10 bg-lilas rounded-lg flex items-center justify-center"><span className="text-black font-bold text-xl">LA</span></div>
-          <h1 className="text-xl font-bold tracking-tight">Larabstrait</h1>
-        </div>
-        <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden p-2 text-gray-400 hover:text-white transition-colors"><X size={24} /></button>
-      </div>
+      
+<div className="flex items-center space-x-3 mb-10 px-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => navigateTo('dashboard')}>
+  <img 
+    src="/logo_larabstrait.png" 
+    alt="Larabstrait" 
+    className="h-10 w-auto object-contain"
+  />
+  <h1 className="text-xl font-bold tracking-tight text-white">Larabstrait</h1>
+</div>
 
       <nav className="flex-1 space-y-2 overflow-y-auto custom-scrollbar">
         {/* --- SECTION PRINCIPALE --- */}

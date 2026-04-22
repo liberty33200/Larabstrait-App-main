@@ -181,7 +181,8 @@ async function notifyAdmin(requestData: any) {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  // Remplace ta ligne actuelle par celle-ci :
+  const PORT = parseInt(process.env.PORT || "3000", 10);
 
   app.set("trust proxy", true);
   app.use(cors({ origin: true, credentials: true }));

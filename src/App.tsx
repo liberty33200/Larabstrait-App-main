@@ -291,12 +291,19 @@ export default function App() {
   return (
     <div className="flex h-screen bg-dark-bg text-gray-100 overflow-hidden flex-col md:flex-row">
       <div className="md:hidden flex items-center justify-between p-4 border-b border-white/5 bg-dark-bg/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => navigateTo('dashboard')}>
-          <div className="w-8 h-8 bg-lilas rounded-lg flex items-center justify-center"><span className="text-black font-bold text-lg">LA</span></div>
-          <h1 className="text-lg font-bold tracking-tight">Larabstrait</h1>
-        </div>
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-gray-400 hover:text-white transition-colors">{isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}</button>
-      </div>
+  <div className="flex items-center space-x-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => navigateTo('dashboard')}>
+    {/* Remplacement du carré par l'image */}
+    <img 
+      src="/logo_larabstrait.png" 
+      alt="Larabstrait" 
+      className="w-8 h-8 object-contain" 
+    />
+    <h1 className="text-lg font-bold tracking-tight">Larabstrait</h1>
+  </div>
+  <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-gray-400 hover:text-white transition-colors">
+    {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+  </button>
+</div>
 
       <Sidebar 
         activeTab={activeTab} 
