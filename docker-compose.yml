@@ -36,4 +36,4 @@ services:
     volumes:
       # On lie le dossier interne /app/data au dossier visible du NAS
       - /volume1/docker/larabstrait-app/data:/app/data
-      - ./data/uploads:/usr/data/uploads
+      - /volume1/docker/larabstrait-app/uploads:/app/data/uploads
