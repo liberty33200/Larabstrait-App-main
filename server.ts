@@ -94,7 +94,21 @@ const vapidKeys = {
   publicKey: process.env.VAPID_PUBLIC_KEY || "",
   privateKey: process.env.VAPID_PRIVATE_KEY || ""
 };
-webpush.setVapidDetails("mailto:contact@larabstrait.fr", vapidKeys.publicKey, vapidKeys.privateKey);
+// Remplace le bloc webpush.setVapidDetails par cette sécurité :
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(
+      `mailto:${process.env.EMAIL_STUDIO || 'contact@larabstrait.fr'}`,
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    console.log("✅ VAPID configuré");
+  } catch (err) {
+    console.error("❌ Erreur VAPID:", err);
+  }
+} else {
+  console.log("⚠️ VAPID non configuré : le serveur démarre sans notifications push.");
+}
 
 declare module "express-session" { interface SessionData { user: any; } }
 
