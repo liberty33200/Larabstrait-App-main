@@ -188,8 +188,20 @@ const vapidKeys = {
   publicKey: process.env.VAPID_PUBLIC_KEY || "BOL1mjmDT2wcuCh-ToFzWu6o9oIjq4FVr85uKtosGYsvA3beiLNqf4YPFHddtBPqfVbfTgRRN6rLCcX3vrXUQhM",
   privateKey: process.env.VAPID_PRIVATE_KEY || "R0V328V-nSSnmYHPj5xpvtVKx7vzs1Ix82kpd9tsvHY"
 };
-
-webpush.setVapidDetails("mailto:florent.bidard@gmail.com", vapidKeys.publicKey, vapidKeys.privateKey);
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(
+      `mailto:${process.env.EMAIL_STUDIO || 'contact@larabstrait.fr'}`,
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    console.log("✅ VAPID configuré");
+  } catch (err) {
+    console.error("❌ Erreur VAPID:", err);
+  }
+} else {
+  console.log("⚠️ VAPID non configuré : le serveur démarre sans notifications push.");
+}
 
 declare module "express-session" { interface SessionData { user: any; } }
 
