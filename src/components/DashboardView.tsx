@@ -9,6 +9,12 @@ import {
 export const DashboardView = ({ appointments, rules, loading, user, onSelectAppointment, apiFetch }: any) => {
   const [showAllAppointments, setShowAllAppointments] = useState(false);
   const [abbyDocs, setAbbyDocs] = useState<any[]>([]);
+  
+  // État pour mémoriser quelle ligne de dessin est déroulée (l'accordéon)
+  const [expandedDrawId, setExpandedDrawId] = useState<number | null>(null);
+  
+  // NOUVEAU : État pour gérer la confirmation in-app du bouton Valider
+  const [validatingId, setValidatingId] = useState<number | null>(null);
 
   useEffect(() => {
     if (apiFetch) {
@@ -19,30 +25,28 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
     }
   }, [apiFetch]);
 
-  // 🎯 FONCTION DE MISE À JOUR RAPIDE DU STATUT
-  const handleQuickStatusUpdate = async (e: React.ChangeEvent<HTMLSelectElement>, apptId: number) => {
-    e.stopPropagation(); // Empêche l'ouverture de la carte
-    const newStatus = e.target.value;
-    
+  // FONCTION DE MISE À JOUR ADAPTÉE POUR LES BOUTONS
+  const handleQuickStatusUpdate = async (newStatus: string, apptId: number) => {
     if (!apiFetch) return;
 
     try {
-      const response = await apiFetch(`/api/appointments/${apptId}/project-status`, {
-        method: 'PUT',
+      const response = await apiFetch(`/api/appointments/${apptId}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectStatus: newStatus })
+        body: JSON.stringify({ project_status: newStatus })
       });
 
       if (response.ok) {
-        // On force un rechargement pour que la liste soit à jour (et que le dessin disparaisse s'il est "Validé")
         window.location.reload(); 
+      } else {
+        console.error("Erreur lors de la sauvegarde du statut");
       }
     } catch (err) {
-      console.error("Erreur lors de la mise à jour rapide du statut:", err);
+      console.error("Erreur réseau lors de la mise à jour rapide du statut:", err);
     }
   };
 
-  // 🎯 Logique des badges de facturation
+  // Logique des badges de facturation
   const getStatusBadge = (appt: any) => {
     const style = (appt.style || "").toLowerCase();
     const isTattoo = style === "flash" || style === "projet perso";
@@ -174,56 +178,118 @@ export const DashboardView = ({ appointments, rules, loading, user, onSelectAppo
         </section>
       )}
 
-      {/* SECTION 2 : DESSINS À PRÉPARER (MODIFIÉE AVEC SÉLECTEUR RAPIDE) */}
+      {/* SECTION 2 : DESSINS À PRÉPARER (NOUVEAU DESIGN ACCORDÉON) */}
       {drawingsToDo.length > 0 && (
         <section className="mb-10">
           <div className="flex justify-between items-center mb-6">
             <div className="flex items-center space-x-3"><div className="w-1 h-6 bg-blue-500 rounded-full" /><h3 className="text-xl md:text-2xl font-bold tracking-tight text-blue-500">Dessins à préparer</h3></div>
           </div>
           <div className="space-y-4">
-            {drawingsToDo.map((appt: any, i: number) => (
-              <motion.div 
-                key={`draw-${appt.id}`} 
-                initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
-                onClick={() => onSelectAppointment(appt)} 
-                className="glass-card p-5 grid grid-cols-[1fr_auto] md:grid-cols-[1fr_180px_140px_40px] items-center gap-4 hover:bg-white/[0.02] transition-all cursor-pointer border-l-2 border-blue-500/30"
-              >
-                <div className="flex items-center space-x-4 min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20"><PenTool size={20} /></div>
-                  <div className="min-w-0">
-                    <h4 className="font-semibold truncate">{appt.client}</h4>
-                    <div className="text-xs text-gray-400">{appt.date} • {appt.time}</div>
+            {drawingsToDo.map((appt: any, i: number) => {
+              const isExpanded = expandedDrawId === appt.id;
+
+              return (
+                <motion.div 
+                  key={`draw-${appt.id}`} 
+                  initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
+                  onClick={() => {
+                    setExpandedDrawId(isExpanded ? null : appt.id);
+                    setValidatingId(null); // On ferme la confirmation si l'accordéon est replié
+                  }} 
+                  className={`glass-card p-5 cursor-pointer border-l-2 transition-all overflow-hidden
+                    ${isExpanded ? 'bg-white/[0.04] border-blue-400 shadow-lg shadow-blue-500/10' : 'hover:bg-white/[0.02] border-blue-500/30'}`}
+                >
+                  {/* LIGNE PRINCIPALE TOUJOURS VISIBLE */}
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center space-x-4 min-w-0">
+                      <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20"><PenTool size={20} /></div>
+                      <div className="min-w-0">
+                        <h4 className="font-semibold truncate text-white">{appt.client}</h4>
+                        <div className="text-xs text-gray-400">{appt.date} • {appt.time}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 shrink-0">
+                      {/* Badge Statique (Quand l'accordéon est fermé ou ouvert) */}
+                      <div className="text-right">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold border
+                          ${appt.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
+                            appt.projectStatus === 'Envoyé' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
+                            appt.projectStatus === 'Dessiné' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                            'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                          }`}
+                        >
+                          {appt.projectStatus || 'À préparer'}
+                        </span>
+                      </div>
+                      
+                      <div className="text-gray-500 flex items-center">
+                        <ChevronDown size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-blue-400' : ''}`} />
+                      </div>
+                    </div>
                   </div>
-                </div>
 
-                <div className="text-right min-w-0">
-                  <p className="text-xs text-gray-400 truncate">{appt.style}</p>
-                  <p className="text-[10px] text-gray-500 truncate mt-1" title={appt.projectRecap}>{appt.projectRecap || 'Pas de détails'}</p>
-                </div>
+                  {/* CONTENU DÉROULANT (ACCORDÉON) */}
+                  {isExpanded && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }} 
+                      animate={{ height: 'auto', opacity: 1 }} 
+                      exit={{ height: 0, opacity: 0 }}
+                      className="mt-5 pt-5 border-t border-white/5"
+                    >
+                      <p className="text-sm text-gray-300 italic mb-4">
+                        <span className="font-semibold text-gray-500 not-italic mr-2">Détails :</span>
+                        "{appt.projectRecap || 'Aucun détail renseigné pour ce projet.'}"
+                      </p>
 
-                {/* SÉLECTEUR DE STATUT RAPIDE */}
-                <div className="hidden md:flex justify-center" onClick={(e) => e.stopPropagation()}>
-                  <select 
-                    value={appt.projectStatus}
-                    onChange={(e) => handleQuickStatusUpdate(e, appt.id)}
-                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold border cursor-pointer outline-none transition-all appearance-none text-center min-w-[110px]
-                      ${appt.projectStatus === 'À modifier' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
-                        appt.projectStatus === 'Envoyé' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
-                        appt.projectStatus === 'Dessiné' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
-                        'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                      }`}
-                  >
-                    <option value="À préparer">À préparer</option>
-                    <option value="Dessiné">Dessiné</option>
-                    <option value="Envoyé">Envoyé</option>
-                    <option value="À modifier">À modifier</option>
-                    <option value="Validé">✅ Valider</option>
-                  </select>
-                </div>
+                      {/* Tous les boutons dans le même flux */}
+                      <div className="flex flex-wrap items-center gap-2 mb-4">
+                        <button onClick={(e) => { e.stopPropagation(); handleQuickStatusUpdate('À préparer', appt.id); }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white transition-colors border border-white/5">À préparer</button>
+                        <button onClick={(e) => { e.stopPropagation(); handleQuickStatusUpdate('Dessiné', appt.id); }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors border border-emerald-500/20">Dessiné</button>
+                        <button onClick={(e) => { e.stopPropagation(); handleQuickStatusUpdate('Envoyé', appt.id); }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors border border-purple-500/20">Envoyé</button>
+                        <button onClick={(e) => { e.stopPropagation(); handleQuickStatusUpdate('À modifier', appt.id); }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors border border-amber-500/20">À modifier</button>
+                        
+                        {/* BOUTON VALIDER AVEC CONFIRMATION IN-APP */}
+                        {validatingId === appt.id ? (
+                          <div className="flex items-center gap-2 pl-3 pr-1 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 transition-all">
+                            <span className="text-[10px] text-blue-300 font-medium">Valider le dessin ?</span>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setValidatingId(null); }} 
+                              className="px-2 py-1.5 rounded-md text-[10px] font-medium text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                            >
+                              Annuler
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleQuickStatusUpdate('Validé', appt.id); }} 
+                              className="px-3 py-1.5 rounded-md text-[10px] font-bold bg-blue-600 text-white hover:bg-blue-500 transition-all shadow-md"
+                            >
+                              Oui, valider
+                            </button>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setValidatingId(appt.id); }} 
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white border border-blue-600/30 transition-all flex items-center justify-center gap-1"
+                          >
+                            <CheckCircle2 size={14} /> Valider
+                          </button>
+                        )}
+                      </div>
 
-                <div className="hidden sm:flex justify-end text-gray-500"><ChevronRight size={20} /></div>
-              </motion.div>
-            ))}
+                      {/* Lien vers le dossier complet */}
+                      <div className="flex justify-center mt-2">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onSelectAppointment(appt); }}
+                          className="text-xs text-gray-500 hover:text-white underline decoration-white/20 hover:decoration-white/50 underline-offset-4 transition-all"
+                        >
+                          Ouvrir la fiche complète du rendez-vous
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
         </section>
       )}

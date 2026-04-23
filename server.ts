@@ -16,23 +16,6 @@ import nodemailer from 'nodemailer';
 import axios, { AxiosInstance } from "axios";
 import cors from "cors";
 
-
-
-// 1. On définit la structure d'une demande pour TypeScript
-interface MockRequest {
-  id: number;
-  client_name: string;
-  client_email: string;
-  project_description: string;
-  instagram: string;
-  reference_images: string;
-  status: string;
-  created_at: string;
-}
-
-// 2. On dit à fakeDb d'utiliser cette structure
-let fakeDb: MockRequest[] = [];
-
 dotenv.config();
 const { Pool } = pkg;
 
@@ -96,6 +79,8 @@ if (fs.existsSync(oldDbPath) && !fs.existsSync(newDbPath)) {
 }
 
 const db = new Database(newDbPath);
+
+// ✅ CONFIGURATION AGNOSTIQUE POSTGRESQL
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -116,6 +101,7 @@ pool.connect(async (err, client, release) => {
   console.log("🐘 Connecté avec succès à PostgreSQL !");
   
   try {
+    // Création de la table booking_requests si elle n'existe pas
     await client.query(`
       CREATE TABLE IF NOT EXISTS booking_requests (
         id SERIAL PRIMARY KEY,
@@ -133,6 +119,7 @@ pool.connect(async (err, client, release) => {
       );
     `);
 
+    // Vérification et ajout des colonnes manquantes (Migrations automatiques)
     const columnsToAdd = [
       `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS location TEXT`,
       `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS size TEXT`,
@@ -140,6 +127,7 @@ pool.connect(async (err, client, release) => {
       `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_bdc_id TEXT`,
       `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_deposit_id TEXT`,
       `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS abby_final_id TEXT`,
+      `ALTER TABLE booking_requests ADD COLUMN IF NOT EXISTS drawing_status TEXT DEFAULT 'À dessiner'` // Ajout pour ta nouvelle feature !
     ];
 
     for (const query of columnsToAdd) {
@@ -233,7 +221,7 @@ app.use(cors({
     'https://formulaire.larabstrait.fr', 
     'https://app.larabstrait.fr'
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
 
@@ -241,7 +229,6 @@ app.use(cors({
   // 1. CONFIGURATION GLOBALE ET SÉCURITÉ
   // ==========================================
   app.set("trust proxy", true);
-  app.use(cors({ origin: true, credentials: true })); // Sécurité CORS activée EN PREMIER
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
   app.use(cookieParser());
@@ -495,24 +482,25 @@ app.post("/api/requests", publicUpload.array('images', 3), async (req: any, res)
     const { clientName, clientEmail, projectDescription, instagram } = req.body;
     const imageUrls = req.files ? (req.files as any[]).map(f => `http://localhost:3000/uploads/${f.filename}`) : [];
 
-    const newRequest = {
-      id: Date.now(),
-      client_name: clientName,
-      client_email: clientEmail,
-      project_description: projectDescription,
-      instagram: instagram || '',
-      reference_images: JSON.stringify(imageUrls),
-      status: 'En attente',
-      created_at: new Date().toISOString()
-    };
-
-    fakeDb.unshift(newRequest);
+    // ✅ Insertion propre dans PostgreSQL
+    const query = `
+      INSERT INTO booking_requests (
+        client_name, client_email, project_description, instagram, 
+        reference_images, status, drawing_status
+      ) VALUES ($1, $2, $3, $4, $5, 'En attente', 'À dessiner')
+      RETURNING *;
+    `;
+    const values = [clientName, clientEmail, projectDescription, instagram || '', JSON.stringify(imageUrls)];
+    
+    const result = await pool.query(query, values);
+    const newRequest = result.rows[0];
 
     // 🔥 DÉCLENCHEMENT DE LA NOTIFICATION
     notifyAdmin(newRequest);
 
     return res.status(201).json({ success: true, requestId: newRequest.id });
   } catch (error: any) {
+    console.error("Erreur création Request Postgres:", error.message);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
@@ -521,22 +509,54 @@ app.post("/api/requests", publicUpload.array('images', 3), async (req: any, res)
   // --- BOÎTE DE RÉCEPTION (ADMIN TATOUEUR) --- (Nécessite requireAuth)
   // =========================================================================
   app.get("/api/requests", requireAuth, async (req, res) => {
-    res.json(fakeDb); 
+    try {
+      const result = await pool.query(`SELECT * FROM booking_requests ORDER BY created_at DESC`);
+      res.json(result.rows);
+    } catch (error: any) {
+      console.error("Erreur GET Requests:", error.message);
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.put("/api/requests/:id/status", requireAuth, express.json(), async (req, res) => {
     try {
       const { id } = req.params;
       const { status } = req.body;
-      // En mode test, on met juste à jour la mémoire vive
-      const reqIndex = fakeDb.findIndex(r => r.id.toString() === id.toString());
-      if (reqIndex !== -1) {
-        fakeDb[reqIndex].status = status;
-        return res.json({ success: true, request: fakeDb[reqIndex] });
+      
+      const result = await pool.query(
+        `UPDATE booking_requests SET status = $1 WHERE id = $2 RETURNING *`,
+        [status, id]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Demande introuvable dans la base de données." });
       }
-      return res.status(404).json({ error: "Demande introuvable en mode test." });
+
+      return res.json({ success: true, request: result.rows[0] });
     } catch (error: any) {
+      console.error("Erreur Update Status Requests:", error.message);
       res.status(500).json({ error: "Erreur serveur lors de la modification de la demande." });
+    }
+  });
+
+  app.patch("/api/requests/:id/drawing-status", requireAuth, express.json(), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { drawing_status } = req.body;
+      
+      const result = await pool.query(
+        `UPDATE booking_requests SET drawing_status = $1 WHERE id = $2 RETURNING *`,
+        [drawing_status, id]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Demande introuvable dans la base de données." });
+      }
+
+      return res.json({ success: true, request: result.rows[0] });
+    } catch (error: any) {
+      console.error("Erreur Update Drawing Status:", error.message);
+      res.status(500).json({ error: "Erreur serveur" });
     }
   });
 
